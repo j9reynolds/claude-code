@@ -1,10 +1,11 @@
 """DGL Command Center — sales digest renderer for the news aggregator.
 
 Turns the aggregator's news.json snapshot into a compact "Market Watch"
-HTML fragment sized for the automated Carrier Sales / Dispatch Report
-emails. The existing report job appends the fragment to its email body,
-so news rides along with the report the Sales team already reads instead
-of adding another email to their inbox.
+HTML fragment for "The DGL Command Center - Account Health" emails (the
+daily per-salesperson reports and the manager rollup) — and only those.
+The Account Health job appends the fragment to the email body it already
+builds, so news rides along with the report the sales team already reads
+instead of adding another email to their inbox.
 
 Only sales-relevant tags are included (configurable via the
 "sales_digest" section of feeds.json): rate and capacity moves, tariffs

@@ -74,28 +74,33 @@ python -m unittest test_aggregator        # 7 tests, stdlib only
 
 No dependencies unless the SQL sink is enabled (`pip install pyodbc`).
 
-## Folding news into the Sales report emails
+## Folding news into the Account Health emails
 
-The Sales team already gets the automated **Carrier Sales / Dispatch
-Report** emails (from `automated_reports@deltagrouplog.com`), so
-sales-relevant news rides along with those instead of becoming another
-email. `sales_digest.py` renders a compact, email-safe "Market Watch"
-fragment (tables + inline styles, no scripts/images) from the aggregator's
-snapshot, limited to the tags that change how a load gets quoted or
-covered: `rates-capacity`, `ports-intl`, `carriers`, `disruption`
-(configurable under `sales_digest` in `feeds.json`).
+News goes into exactly one email family: **The DGL Command Center -
+Account Health** emails (from `DGLCommandCenter@DeltaGroupLog.com`) —
+the daily per-salesperson reports and the manager rollup. It does NOT
+go into the Carrier Sales / Dispatch Report or other operational
+report emails; those stay short and urgent.
+
+`sales_digest.py` renders a compact, email-safe "Market Watch" fragment
+(tables + inline styles, no scripts/images) from the aggregator's
+snapshot, limited to the tags that matter in customer conversations:
+`rates-capacity`, `ports-intl`, `carriers`, `disruption` (configurable
+under `sales_digest` in `feeds.json`).
 
 ```
 python sales_digest.py --config feeds.json --input news.json \
     --output sales_digest.html --hours 24
 ```
 
-Wire-up in the report job: run `sales_digest.py` right after
+Wire-up in the Account Health job: run `sales_digest.py` right after
 `aggregator.py`, then append the fragment file to the email body it
-already builds — the fragment is empty when nothing qualifies, so the
-append can be unconditional. Recommended cadence: include it in the
-**first run of the day (08:00)** only, so hourly urgent reports stay
-short and the news doesn't repeat all day.
+already builds (after the account tables, before the footer) — the
+fragment is empty when nothing qualifies, so the append can be
+unconditional. The Account Health send is daily, which maps one-to-one
+onto the default 24-hour lookback: each item appears exactly once. The
+same fragment works for both the per-salesperson emails and the
+manager rollup.
 
 ## Tagging
 
