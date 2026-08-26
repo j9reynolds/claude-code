@@ -74,6 +74,29 @@ python -m unittest test_aggregator        # 7 tests, stdlib only
 
 No dependencies unless the SQL sink is enabled (`pip install pyodbc`).
 
+## Folding news into the Sales report emails
+
+The Sales team already gets the automated **Carrier Sales / Dispatch
+Report** emails (from `automated_reports@deltagrouplog.com`), so
+sales-relevant news rides along with those instead of becoming another
+email. `sales_digest.py` renders a compact, email-safe "Market Watch"
+fragment (tables + inline styles, no scripts/images) from the aggregator's
+snapshot, limited to the tags that change how a load gets quoted or
+covered: `rates-capacity`, `ports-intl`, `carriers`, `disruption`
+(configurable under `sales_digest` in `feeds.json`).
+
+```
+python sales_digest.py --config feeds.json --input news.json \
+    --output sales_digest.html --hours 24
+```
+
+Wire-up in the report job: run `sales_digest.py` right after
+`aggregator.py`, then append the fragment file to the email body it
+already builds — the fragment is empty when nothing qualifies, so the
+append can be unconditional. Recommended cadence: include it in the
+**first run of the day (08:00)** only, so hourly urgent reports stay
+short and the news doesn't repeat all day.
+
 ## Tagging
 
 `tags` in `feeds.json` is a map of tag → keyword list, matched

@@ -42,6 +42,10 @@
     }
   ],
   "sql_connection_string": null,
+  "sales_digest": {
+    "tags": ["rates-capacity", "ports-intl", "carriers", "disruption"],
+    "max_items": 8
+  },
   "tags": {
     "regulatory": ["FMCSA", "DOT ", "CDL", "hours of service", "HOS", "ELD", "emission", "EPA", "speed limiter", "English proficiency", "cabotage"],
     "rates-capacity": ["spot rate", "tender", "capacity", "diesel", "fuel price", "rate increase", "contract rate", "load-to-truck"],
