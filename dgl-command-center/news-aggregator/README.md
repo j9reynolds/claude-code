@@ -102,6 +102,36 @@ onto the default 24-hour lookback: each item appears exactly once. The
 same fragment works for both the per-salesperson emails and the
 manager rollup.
 
+## Per-customer news (customer_news.py)
+
+Besides industry news, the Account Health call-prep blocks can carry news
+about the customer itself — a plant opening, an acquisition, a product
+launch is exactly the opener a save or growth call wants.
+
+`customer_news.py` reads `customers.json` (McLeod customer id, company
+name, website domain — source domains from HubSpot's company `domain`
+property) and collects recent items per customer, two ways:
+
+1. **Domain feed discovery** — probes the customer's own site for an
+   RSS/Atom press feed (common paths, then the homepage's
+   `<link rel="alternate">` tags). Highest-signal when it exists.
+2. **Google News fallback** — an RSS search for the exact company name
+   via `news.google.com/rss/search`. Covers everyone else, and costs one
+   egress host instead of hundreds.
+
+```
+python customer_news.py --config customers.json --output customer_news.json
+```
+
+Output is keyed by McLeod customer id so the Account Health job can join
+it straight onto its account rows. Crawling is polite: robots.txt honored
+per domain, a handful of requests per customer, one run per day scheduled
+ahead of the Account Health send.
+
+Egress note: domain discovery needs outbound 443 to each enabled
+customer domain — if the allowlist stays strict, set `"domain": null`
+and rely on the Google News fallback (`news.google.com` only).
+
 ## Tagging
 
 `tags` in `feeds.json` is a map of tag → keyword list, matched

@@ -1,0 +1,28 @@
+{
+  "_comment": "Customer list for the per-customer news crawler (customer_news.py). customer_id is the McLeod customer id, which is how the Account Health email job joins the output back to accounts. domain is the customer's website (no scheme, no www) - source it from HubSpot's company 'domain' property or maintain by hand. Set enabled false to skip a customer without deleting the row. options.google_news_fallback uses a Google News RSS search for customers whose domains expose no feed.",
+  "options": {
+    "lookback_days": 14,
+    "max_items_per_customer": 3,
+    "google_news_fallback": true
+  },
+  "customers": [
+    {
+      "customer_id": "UNITMETN",
+      "name": "United States Postal Service",
+      "domain": "usps.com",
+      "enabled": true
+    },
+    {
+      "customer_id": "GOFOVECA",
+      "name": "GOFO Inc",
+      "domain": "gofoexpress.com",
+      "enabled": true
+    },
+    {
+      "customer_id": "APEXDFTX",
+      "name": "Apex Logistics International",
+      "domain": "apexglobe.com",
+      "enabled": true
+    }
+  ]
+}
