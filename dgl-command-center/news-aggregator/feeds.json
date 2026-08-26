@@ -1,0 +1,53 @@
+{
+  "feeds": [
+    {
+      "name": "FreightWaves",
+      "url": "https://www.freightwaves.com/news/feed",
+      "enabled": true
+    },
+    {
+      "name": "Transport Topics",
+      "url": "https://www.ttnews.com/rss.xml",
+      "enabled": true
+    },
+    {
+      "name": "Land Line",
+      "url": "https://landline.media/feed/",
+      "enabled": true
+    },
+    {
+      "name": "Supply Chain Dive",
+      "url": "https://www.supplychaindive.com/feeds/news/",
+      "enabled": true
+    },
+    {
+      "name": "The Loadstar",
+      "url": "https://theloadstar.com/feed/",
+      "enabled": false
+    },
+    {
+      "name": "gCaptain",
+      "url": "https://gcaptain.com/feed/",
+      "enabled": false
+    },
+    {
+      "name": "Overdrive",
+      "url": "https://www.overdriveonline.com/rss",
+      "enabled": false
+    },
+    {
+      "name": "CCJ",
+      "url": "https://www.ccjdigital.com/rss",
+      "enabled": false
+    }
+  ],
+  "sql_connection_string": null,
+  "tags": {
+    "regulatory": ["FMCSA", "DOT ", "CDL", "hours of service", "HOS", "ELD", "emission", "EPA", "speed limiter", "English proficiency", "cabotage"],
+    "rates-capacity": ["spot rate", "tender", "capacity", "diesel", "fuel price", "rate increase", "contract rate", "load-to-truck"],
+    "carriers": ["bankruptcy", "shuts down", "ceases operations", "fraud", "double brokering", "carrier authority", "acquisition", "merger", "layoff"],
+    "ports-intl": ["tariff", "port ", "ocean", "container", "Panama Canal", "customs", "import", "export", "cross-border", "Mexico", "Canada"],
+    "disruption": ["hurricane", "winter storm", "flood", "closure", "strike", "shutdown", "outage", "cyberattack", "recall"],
+    "tech-tms": ["McLeod", "MacroPoint", "TMS", "telematics", "autonomous", "AI", "EDI", "visibility platform"]
+  }
+}
