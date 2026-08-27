@@ -62,16 +62,20 @@ python3 plugins/mcleod-ops/scripts/fetch_mail.py --test          # verify login
 python3 plugins/mcleod-ops/scripts/fetch_mail.py --since 6h      # what a cycle would read
 ```
 
-On Windows, load the app password out of Credential Manager instead of pasting it, then start Claude Code from that same shell so it inherits the variables:
+On Windows, load the app password out of Credential Manager instead of pasting it. `Connect-OpsMail.ps1` reads the credential through the Windows `CredRead` API directly, so it needs no third-party module:
 
 ```powershell
-Install-Module CredentialManager -Scope CurrentUser   # one time; third-party PSGallery module
-cmdkey /list                                          # find the stored target name
+cmdkey /list                                    # find the stored target name
 
-$c = Get-StoredCredential -Target "<target-name>"
-$env:OPS_MAILBOX          = "ops@yourdomain.com"
-$env:OPS_MAIL_APP_PASSWORD = $c.GetNetworkCredential().Password
+cd <your clone of this repo>
+.\plugins\mcleod-ops\scripts\Connect-OpsMail.ps1 -Target "<target-name>" -Test
 ```
+
+It sets `OPS_MAILBOX` (from the credential's stored user name, unless you pass `-Mailbox`) and `OPS_MAIL_APP_PASSWORD` for the current process, then `-Test` opens a TLS IMAP connection and reports whether `LOGIN` is accepted. The password is never printed, logged, or written to disk — only its length.
+
+Start Claude Code from that same shell so it inherits the variables. They live in that process only; a new window needs the script run again.
+
+`cmdkey` lists generic credentials with a `LegacyGeneric:target=` prefix — pass just the part after `target=`; the script tries both spellings anyway.
 
 Two things that will bite you if nobody says them out loud:
 
@@ -160,6 +164,7 @@ The builder is deliberately hard to talk into building things. It will refuse an
 | `commands/ops-status.md` | `/ops-status` |
 | `scripts/ledger.py` | Dedupe ledger and source cursors |
 | `scripts/fetch_mail.py` | IMAP reader for app-password auth |
+| `scripts/Connect-OpsMail.ps1` | Loads the app password from Windows Credential Manager; `-Test` verifies IMAP login |
 | `config/*.example.json` | Configuration templates |
 
 ## Limitations
