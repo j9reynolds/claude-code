@@ -107,7 +107,12 @@ On Windows, load a stored McLeod credential and check what the endpoint expects 
 
 A 401 or 403 with a `WWW-Authenticate` header tells you the real scheme — put that in `sources.json` rather than assuming.
 
-**A 401 with no `WWW-Authenticate` header means something different**: the endpoint is not asking for HTTP auth at all. Either the scheme is not Basic, or the URL is a base path rather than a callable resource. Read the API documentation for the real login flow instead of trying other schemes against production.
+**A 401 with no `WWW-Authenticate` header is ambiguous**, so `-TestHttp` also sends a no-credential control request and compares the two responses:
+
+- **Identical** — the server never evaluated your `Authorization` header. Basic is the wrong scheme; the API likely wants a login call that returns a token, or the URL is a base path rather than a callable resource.
+- **Different** — Basic is being processed and these credentials were rejected. Check that the account is an API user rather than a portal login.
+
+Either way, get the login flow from the API documentation rather than trying more schemes against production.
 
 > **The REST endpoint paths and auth header names in the example are placeholders.** They vary by McLeod product (LoadMaster vs PowerBroker), release, and how your instance was provisioned. Fill them in from your own McLeod API documentation and confirm them against a non-production instance before enabling. The watcher is instructed to report a failed query rather than probe for a working path — guessing at endpoints against a production TMS is not something you want an agent doing.
 

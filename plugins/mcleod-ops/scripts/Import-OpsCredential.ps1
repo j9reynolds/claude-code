@@ -141,6 +141,18 @@ if ($TestHttp) {
     Write-Host "`nTesting HTTP auth against $TestHttp ..." -ForegroundColor Cyan
     $pair = [System.Text.Encoding]::UTF8.GetBytes("${UserName}:$($stored.Password)")
     $headers = @{ Authorization = "Basic " + [Convert]::ToBase64String($pair) }
+
+    # Control request with no credentials. If the server answers identically with and
+    # without them, it is not evaluating our Authorization header at all — which tells
+    # us the scheme is wrong, rather than the password.
+    $control = $null
+    try {
+        $control = Invoke-WebRequest -Uri $TestHttp -Method Get -TimeoutSec 30 -SkipHttpErrorCheck
+        Write-Host "  control (no credentials sent): HTTP $($control.StatusCode), $($control.RawContentLength) bytes"
+    } catch {
+        Write-Host "  control request failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
     try {
         $resp = Invoke-WebRequest -Uri $TestHttp -Headers $headers -Method Get -TimeoutSec 30 -SkipHttpErrorCheck
         Write-Host "  HTTP $($resp.StatusCode) $($resp.StatusDescription)" -ForegroundColor Green
@@ -160,9 +172,17 @@ if ($TestHttp) {
 
         if (-not $resp.Headers['WWW-Authenticate']) {
             Write-Host "`n  No WWW-Authenticate header." -ForegroundColor Yellow
-            Write-Host "  A 401 without a challenge means the endpoint is not asking for HTTP auth at all -" -ForegroundColor Yellow
-            Write-Host "  so Basic is likely the wrong scheme, or this URL is a base path rather than a" -ForegroundColor Yellow
-            Write-Host "  callable resource. Check the API documentation for the real login flow." -ForegroundColor Yellow
+            if ($control -and $control.StatusCode -eq $resp.StatusCode -and
+                $control.RawContentLength -eq $resp.RawContentLength) {
+                Write-Host "  The response is IDENTICAL with and without credentials, so the server is not" -ForegroundColor Yellow
+                Write-Host "  evaluating the Authorization header. Basic is the wrong scheme for this URL:" -ForegroundColor Yellow
+                Write-Host "  the API most likely wants a login call that returns a token or session, or this" -ForegroundColor Yellow
+                Write-Host "  is a base path rather than a callable resource. Get the login flow from the docs." -ForegroundColor Yellow
+            } else {
+                Write-Host "  The response DIFFERS from the no-credential control, so Basic is being processed" -ForegroundColor Yellow
+                Write-Host "  and these particular credentials were rejected. Confirm this account is an API" -ForegroundColor Yellow
+                Write-Host "  user rather than a portal login." -ForegroundColor Yellow
+            }
         } else {
             Write-Host "`n  The WWW-Authenticate header above names the scheme this endpoint wants;" -ForegroundColor Yellow
             Write-Host "  put that scheme in sources.json rather than assuming Basic." -ForegroundColor Yellow
