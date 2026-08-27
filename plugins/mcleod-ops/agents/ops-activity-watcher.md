@@ -92,7 +92,9 @@ Either way, fetch metadata and body for messages since the cursor, minus anythin
 
 Resolve any `${VAR}` in the config from the environment. **Never print, log, echo, or write a credential** — not into your report, not into the ledger, not into an agent brief. If a variable is unset, name the variable, never a value.
 
-**McLeod** — run the configured queries for the `adapter` in use. For `rest`, call the configured paths with the configured auth headers. For `sql`, run the configured read-only queries. For `file_drop`, list matching files in the watch directory. Use exactly the paths, SQL, and patterns in the config.
+**McLeod** — run the configured queries for the `adapter` in use. For `rest`, call the configured paths using `auth.scheme`: `basic` sends the username and password from the named environment variables as HTTP Basic, `header` sends the literal headers. For `sql`, run the configured read-only queries. For `file_drop`, list matching files in the watch directory. Use exactly the paths, SQL, and patterns in the config.
+
+If `queries` is empty, this source yields nothing — say so in the report as configuration still owed, not as a quiet zero. If a query returns 401 or 403, report the status and any `WWW-Authenticate` header verbatim: that header names the scheme the endpoint actually wants. Do not try another scheme, path, or credential.
 
 If a source is unreachable, record that, keep its cursor unmoved, and continue with the other source. A broken McLeod connection is not a reason to leave the mailbox unwatched.
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Values written as ${VAR} are read from the environment at run time — keep real addresses and every secret in environment variables, never in this file.",
+  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Values written as ${VAR} are read from the environment at run time \u2014 keep real addresses and every secret in environment variables, never in this file.",
   "defaults": {
     "poll_window_minutes": 15,
     "max_events_per_cycle": 25,
@@ -11,9 +11,11 @@
       "kind": "email",
       "enabled": true,
       "adapter": "imap",
-      "_adapter_options": "imap | microsoft365 | gmail — use imap when connecting with an app password; use microsoft365/gmail to ride an already-connected MCP connector instead",
+      "_adapter_options": "imap | microsoft365 | gmail \u2014 use imap when connecting with an app password; use microsoft365/gmail to ride an already-connected MCP connector instead",
       "mailbox": "${OPS_MAILBOX}",
-      "folders": ["INBOX"],
+      "folders": [
+        "INBOX"
+      ],
       "imap": {
         "_comment": "Used when adapter is 'imap'. Credentials come from the environment; nothing secret belongs in this file.",
         "host": "outlook.office365.com",
@@ -23,12 +25,27 @@
         "password_env": "OPS_MAIL_APP_PASSWORD"
       },
       "ignore": {
-        "from_domains": ["bounces.example.com"],
-        "subject_patterns": ["^Out of Office", "^Automatic reply", "^Undeliverable"],
-        "from_addresses": ["PowerAutomateNoReply@microsoft.com"]
+        "from_domains": [
+          "bounces.example.com"
+        ],
+        "subject_patterns": [
+          "^Out of Office",
+          "^Automatic reply",
+          "^Undeliverable"
+        ],
+        "from_addresses": [
+          "PowerAutomateNoReply@microsoft.com"
+        ]
       },
       "attachment_handling": {
-        "read_types": ["pdf", "png", "jpg", "tif", "csv", "xlsx"],
+        "read_types": [
+          "pdf",
+          "png",
+          "jpg",
+          "tif",
+          "csv",
+          "xlsx"
+        ],
         "max_size_mb": 20
       }
     },
@@ -37,35 +54,23 @@
       "kind": "tms",
       "enabled": true,
       "adapter": "rest",
-      "_adapter_options": "rest | sql | file_drop — rest uses the McLeod web services API, sql reads a reporting replica, file_drop watches an EDI/export directory",
+      "_adapter_options": "rest | sql | file_drop \u2014 rest uses the McLeod web services API, sql reads a reporting replica, file_drop watches an EDI/export directory",
       "rest": {
         "base_url": "https://MCLEOD_HOST/ws/api",
-        "_auth_comment": "Header names and the exact endpoint paths vary by McLeod release (LoadMaster vs PowerBroker) and by how your instance was provisioned. Confirm all of these against your own McLeod API documentation before enabling — they are placeholders, not verified defaults.",
+        "_auth_comment": "Confirm the scheme AND the endpoint paths against your own McLeod API documentation, or by calling the endpoint once and reading its WWW-Authenticate header (Import-OpsCredential.ps1 -TestHttp does this). These are placeholders, not verified defaults, and they differ across McLeod products and releases.",
         "auth": {
-          "scheme": "header",
+          "scheme": "basic",
+          "_scheme_options": "basic | header \u2014 'basic' sends username/password as HTTP Basic; 'header' sends the literal headers below",
+          "username_env": "MCLEOD_API_USER",
+          "password_env": "MCLEOD_API_PASSWORD",
           "headers": {
+            "_comment": "Used only when scheme is 'header'.",
             "Authorization": "Token ${MCLEOD_API_TOKEN}",
             "X-com.mcleodsoftware.CompanyID": "${MCLEOD_COMPANY_ID}"
           }
         },
-        "queries": [
-          {
-            "id": "orders-changed",
-            "purpose": "orders created or updated since the cursor",
-            "path": "/orders",
-            "params": { "changedSince": "${CURSOR}", "orderBy": "changedDate" },
-            "cursor_field": "changedDate",
-            "id_field": "id"
-          },
-          {
-            "id": "movements-in-transit",
-            "purpose": "movements needing tracking coverage",
-            "path": "/movements",
-            "params": { "status": "P", "changedSince": "${CURSOR}" },
-            "cursor_field": "changedDate",
-            "id_field": "id"
-          }
-        ]
+        "queries": [],
+        "_queries_comment": "Intentionally empty. Fill in from your McLeod API documentation \u2014 each entry needs id, path, params (use ${CURSOR} for the high-water mark), cursor_field and id_field. The watcher reports a failed query rather than probing for a working path."
       },
       "sql": {
         "_comment": "Used only when adapter is 'sql'. Read-only credentials against a reporting replica.",
@@ -82,7 +87,10 @@
       "file_drop": {
         "_comment": "Used only when adapter is 'file_drop'. Directory McLeod exports EDI/CSV into.",
         "watch_dir": "/PATH/TO/MCLEOD/EXPORT",
-        "patterns": ["*.edi", "*.csv"]
+        "patterns": [
+          "*.edi",
+          "*.csv"
+        ]
       }
     }
   ],

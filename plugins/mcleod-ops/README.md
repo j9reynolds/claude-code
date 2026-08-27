@@ -62,13 +62,13 @@ python3 plugins/mcleod-ops/scripts/fetch_mail.py --test          # verify login
 python3 plugins/mcleod-ops/scripts/fetch_mail.py --since 6h      # what a cycle would read
 ```
 
-On Windows, load the app password out of Credential Manager instead of pasting it. `Connect-OpsMail.ps1` reads the credential through the Windows `CredRead` API directly, so it needs no third-party module:
+On Windows, load the app password out of Credential Manager instead of pasting it. `Import-OpsCredential.ps1` reads the credential through the Windows `CredRead` API directly, so it needs no third-party module:
 
 ```powershell
 cmdkey /list                                    # find the stored target name
 
 cd <your clone of this repo>
-.\plugins\mcleod-ops\scripts\Connect-OpsMail.ps1 -Target "<target-name>" -Test
+.\plugins\mcleod-ops\scripts\Import-OpsCredential.ps1 -Target "<target-name>" -TestImap
 ```
 
 It sets `OPS_MAILBOX` (from the credential's stored user name, unless you pass `-Mailbox`) and `OPS_MAIL_APP_PASSWORD` for the current process, then `-Test` opens a TLS IMAP connection and reports whether `LOGIN` is accepted. The password is never printed, logged, or written to disk — only its length.
@@ -89,6 +89,23 @@ Two things that will bite you if nobody says them out loud:
 | `rest` | McLeod web services API | You have API credentials provisioned |
 | `sql` | A read-only reporting replica | You have DB access but not API access |
 | `file_drop` | An EDI/CSV export directory | Integration happens over file exchange |
+
+Credentials for `rest` come from the environment too — `auth.scheme` picks how they are sent:
+
+| `scheme` | Sends | Confirm it with |
+|---|---|---|
+| `basic` | `username_env` / `password_env` as HTTP Basic | the endpoint's `WWW-Authenticate` header |
+| `header` | The literal headers you configure | your McLeod API documentation |
+
+On Windows, load a stored McLeod credential and check what the endpoint expects in one step:
+
+```powershell
+.\plugins\mcleod-ops\scripts\Import-OpsCredential.ps1 -Target "<stored-target>" `
+    -UsernameVariable MCLEOD_API_USER -PasswordVariable MCLEOD_API_PASSWORD `
+    -TestHttp "<your McLeod base URL>"
+```
+
+A 401 or 403 with a `WWW-Authenticate` header tells you the real scheme — put that in `sources.json` rather than assuming.
 
 > **The REST endpoint paths and auth header names in the example are placeholders.** They vary by McLeod product (LoadMaster vs PowerBroker), release, and how your instance was provisioned. Fill them in from your own McLeod API documentation and confirm them against a non-production instance before enabling. The watcher is instructed to report a failed query rather than probe for a working path — guessing at endpoints against a production TMS is not something you want an agent doing.
 
@@ -164,7 +181,7 @@ The builder is deliberately hard to talk into building things. It will refuse an
 | `commands/ops-status.md` | `/ops-status` |
 | `scripts/ledger.py` | Dedupe ledger and source cursors |
 | `scripts/fetch_mail.py` | IMAP reader for app-password auth |
-| `scripts/Connect-OpsMail.ps1` | Loads the app password from Windows Credential Manager; `-Test` verifies IMAP login |
+| `scripts/Import-OpsCredential.ps1` | Loads a credential from Windows Credential Manager; verifies it with `-TestImap` / `-TestHttp` |
 | `config/*.example.json` | Configuration templates |
 
 ## Limitations
