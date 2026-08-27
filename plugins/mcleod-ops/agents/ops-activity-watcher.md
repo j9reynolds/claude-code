@@ -77,7 +77,20 @@ Load both config files. Read the cursor for each enabled source. Read `list --op
 
 Pull activity from each enabled source since its cursor, capped at `max_events_per_cycle`.
 
-**Mailbox** — use the email tools this session actually has connected (Microsoft 365/Outlook, Gmail, or an IMAP CLI, per `adapter`). Fetch metadata and body for messages since the cursor, minus anything matching `ignore`. Read attachments only within `attachment_handling` limits.
+**Mailbox** — follow the source's `adapter`:
+
+- `imap` (app-password auth, signs in as the mailbox itself) — run the helper, which reads credentials from the environment variables the config names:
+
+  ```bash
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/fetch_mail.py --since <cursor> --limit <max_events_per_cycle>
+  ```
+
+  If it reports missing environment variables, a login rejection, or an unreachable host, report that verbatim and leave the cursor unmoved. Do not retry with a different host, port, or credential.
+- `microsoft365` / `gmail` — use the connector tools this session has, passing the mailbox the config names.
+
+Either way, fetch metadata and body for messages since the cursor, minus anything matching `ignore`, and read attachments only within `attachment_handling` limits.
+
+Resolve any `${VAR}` in the config from the environment. **Never print, log, echo, or write a credential** — not into your report, not into the ledger, not into an agent brief. If a variable is unset, name the variable, never a value.
 
 **McLeod** — run the configured queries for the `adapter` in use. For `rest`, call the configured paths with the configured auth headers. For `sql`, run the configured read-only queries. For `file_drop`, list matching files in the watch directory. Use exactly the paths, SQL, and patterns in the config.
 

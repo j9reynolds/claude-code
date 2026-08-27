@@ -42,9 +42,43 @@ Without those files everything still runs, but in `observe` autonomy against the
 
 Two sources ship configured: `ops-mailbox` and `mcleod-tms`.
 
-The mailbox uses whichever email connector this session actually has (Microsoft 365/Outlook, Gmail, or IMAP) — set `adapter` to match, and set `mailbox` to the real address. `ignore` keeps auto-replies and bounces out of the event stream.
+Values written as `${VAR}` are resolved from the environment at run time. Keep the mailbox address and every secret there rather than in the file — the config is meant to be shareable, and this repository is a public fork.
 
-McLeod supports three adapters, because shops integrate with it differently:
+**Mailbox.** Pick the `adapter` that matches how you authenticate:
+
+| `adapter` | Connects via | Use when |
+|---|---|---|
+| `imap` | Direct IMAP with an app password | You have an app password for the mailbox itself |
+| `microsoft365` | An already-connected Outlook MCP connector | The session has Microsoft 365 connected with access to the mailbox |
+| `gmail` | An already-connected Gmail MCP connector | Same, for Google Workspace |
+
+The `imap` path sidesteps delegate access entirely: it signs in **as the watched mailbox**, so it works for a shared/test mailbox that your own account has no rights over. Set two variables and `scripts/fetch_mail.py` does the rest:
+
+```bash
+export OPS_MAILBOX="ops@yourdomain.com"
+export OPS_MAIL_APP_PASSWORD="…"          # never put this in the config file
+
+python3 plugins/mcleod-ops/scripts/fetch_mail.py --test          # verify login
+python3 plugins/mcleod-ops/scripts/fetch_mail.py --since 6h      # what a cycle would read
+```
+
+On Windows, load the app password out of Credential Manager instead of pasting it, then start Claude Code from that same shell so it inherits the variables:
+
+```powershell
+Install-Module CredentialManager -Scope CurrentUser   # one time; third-party PSGallery module
+cmdkey /list                                          # find the stored target name
+
+$c = Get-StoredCredential -Target "<target-name>"
+$env:OPS_MAILBOX          = "ops@yourdomain.com"
+$env:OPS_MAIL_APP_PASSWORD = $c.GetNetworkCredential().Password
+```
+
+Two things that will bite you if nobody says them out loud:
+
+- **Claude Code cloud sessions cannot use the `imap` adapter.** Outbound port 993 is blocked there — only HTTPS/443 through the agent proxy is reachable. Run the IMAP path from a local session (which is also where Credential Manager lives), or use the `microsoft365`/`gmail` connector adapters in the cloud.
+- **Microsoft has broadly disabled basic auth for IMAP in Exchange Online.** An app password may be refused regardless of whether it is correct. `--test` reports the server's own rejection so you can tell a bad credential from a disabled protocol.
+
+**McLeod** supports three adapters, because shops integrate with it differently:
 
 | `adapter` | Reads from | Use when |
 |---|---|---|
@@ -53,8 +87,6 @@ McLeod supports three adapters, because shops integrate with it differently:
 | `file_drop` | An EDI/CSV export directory | Integration happens over file exchange |
 
 > **The REST endpoint paths and auth header names in the example are placeholders.** They vary by McLeod product (LoadMaster vs PowerBroker), release, and how your instance was provisioned. Fill them in from your own McLeod API documentation and confirm them against a non-production instance before enabling. The watcher is instructed to report a failed query rather than probe for a working path — guessing at endpoints against a production TMS is not something you want an agent doing.
-
-Secrets go in environment variables (`${MCLEOD_API_TOKEN}`, `${MCLEOD_COMPANY_ID}`), never in the file.
 
 ### `routes.json` — what happens to each thing
 
@@ -127,6 +159,7 @@ The builder is deliberately hard to talk into building things. It will refuse an
 | `commands/ops-watch.md` | `/ops-watch` |
 | `commands/ops-status.md` | `/ops-status` |
 | `scripts/ledger.py` | Dedupe ledger and source cursors |
+| `scripts/fetch_mail.py` | IMAP reader for app-password auth |
 | `config/*.example.json` | Configuration templates |
 
 ## Limitations

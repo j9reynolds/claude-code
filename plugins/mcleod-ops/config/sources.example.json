@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Every placeholder in ALL_CAPS must be replaced. Secrets belong in environment variables, never in this file.",
+  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Values written as ${VAR} are read from the environment at run time — keep real addresses and every secret in environment variables, never in this file.",
   "defaults": {
     "poll_window_minutes": 15,
     "max_events_per_cycle": 25,
@@ -10,14 +10,22 @@
       "id": "ops-mailbox",
       "kind": "email",
       "enabled": true,
-      "adapter": "microsoft365",
-      "_adapter_options": "microsoft365 | gmail | imap — pick the one matching the MCP server or CLI this session actually has connected",
-      "mailbox": "OPS_MAILBOX@YOURDOMAIN.COM",
-      "folders": ["Inbox"],
+      "adapter": "imap",
+      "_adapter_options": "imap | microsoft365 | gmail — use imap when connecting with an app password; use microsoft365/gmail to ride an already-connected MCP connector instead",
+      "mailbox": "${OPS_MAILBOX}",
+      "folders": ["INBOX"],
+      "imap": {
+        "_comment": "Used when adapter is 'imap'. Credentials come from the environment; nothing secret belongs in this file.",
+        "host": "outlook.office365.com",
+        "port": 993,
+        "tls": true,
+        "username_env": "OPS_MAILBOX",
+        "password_env": "OPS_MAIL_APP_PASSWORD"
+      },
       "ignore": {
         "from_domains": ["bounces.example.com"],
         "subject_patterns": ["^Out of Office", "^Automatic reply", "^Undeliverable"],
-        "from_addresses": ["no-reply@YOURDOMAIN.COM"]
+        "from_addresses": ["PowerAutomateNoReply@microsoft.com"]
       },
       "attachment_handling": {
         "read_types": ["pdf", "png", "jpg", "tif", "csv", "xlsx"],

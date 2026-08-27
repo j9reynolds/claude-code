@@ -3,3 +3,7 @@
 # mcleod-ops runtime state: event ledger and source cursors, holding
 # operational data about real loads, carriers, and customers.
 .claude/mcleod-ops/
+
+# Python bytecode from plugin scripts
+__pycache__/
+*.pyc
