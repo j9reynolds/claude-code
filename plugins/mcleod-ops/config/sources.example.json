@@ -1,0 +1,93 @@
+{
+  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Every placeholder in ALL_CAPS must be replaced. Secrets belong in environment variables, never in this file.",
+  "defaults": {
+    "poll_window_minutes": 15,
+    "max_events_per_cycle": 25,
+    "autonomy": "draft"
+  },
+  "sources": [
+    {
+      "id": "ops-mailbox",
+      "kind": "email",
+      "enabled": true,
+      "adapter": "microsoft365",
+      "_adapter_options": "microsoft365 | gmail | imap — pick the one matching the MCP server or CLI this session actually has connected",
+      "mailbox": "OPS_MAILBOX@YOURDOMAIN.COM",
+      "folders": ["Inbox"],
+      "ignore": {
+        "from_domains": ["bounces.example.com"],
+        "subject_patterns": ["^Out of Office", "^Automatic reply", "^Undeliverable"],
+        "from_addresses": ["no-reply@YOURDOMAIN.COM"]
+      },
+      "attachment_handling": {
+        "read_types": ["pdf", "png", "jpg", "tif", "csv", "xlsx"],
+        "max_size_mb": 20
+      }
+    },
+    {
+      "id": "mcleod-tms",
+      "kind": "tms",
+      "enabled": true,
+      "adapter": "rest",
+      "_adapter_options": "rest | sql | file_drop — rest uses the McLeod web services API, sql reads a reporting replica, file_drop watches an EDI/export directory",
+      "rest": {
+        "base_url": "https://MCLEOD_HOST/ws/api",
+        "_auth_comment": "Header names and the exact endpoint paths vary by McLeod release (LoadMaster vs PowerBroker) and by how your instance was provisioned. Confirm all of these against your own McLeod API documentation before enabling — they are placeholders, not verified defaults.",
+        "auth": {
+          "scheme": "header",
+          "headers": {
+            "Authorization": "Token ${MCLEOD_API_TOKEN}",
+            "X-com.mcleodsoftware.CompanyID": "${MCLEOD_COMPANY_ID}"
+          }
+        },
+        "queries": [
+          {
+            "id": "orders-changed",
+            "purpose": "orders created or updated since the cursor",
+            "path": "/orders",
+            "params": { "changedSince": "${CURSOR}", "orderBy": "changedDate" },
+            "cursor_field": "changedDate",
+            "id_field": "id"
+          },
+          {
+            "id": "movements-in-transit",
+            "purpose": "movements needing tracking coverage",
+            "path": "/movements",
+            "params": { "status": "P", "changedSince": "${CURSOR}" },
+            "cursor_field": "changedDate",
+            "id_field": "id"
+          }
+        ]
+      },
+      "sql": {
+        "_comment": "Used only when adapter is 'sql'. Read-only credentials against a reporting replica.",
+        "dsn_env": "MCLEOD_READONLY_DSN",
+        "queries": [
+          {
+            "id": "orders-changed",
+            "sql": "SELECT id, status, changed_date FROM orders WHERE changed_date > ? ORDER BY changed_date",
+            "cursor_field": "changed_date",
+            "id_field": "id"
+          }
+        ]
+      },
+      "file_drop": {
+        "_comment": "Used only when adapter is 'file_drop'. Directory McLeod exports EDI/CSV into.",
+        "watch_dir": "/PATH/TO/MCLEOD/EXPORT",
+        "patterns": ["*.edi", "*.csv"]
+      }
+    }
+  ],
+  "escalation": {
+    "_comment": "Where the watcher reports things it will not handle on its own.",
+    "channel": "report-to-user",
+    "_channel_options": "report-to-user | slack | email",
+    "slack_channel": "#freight-ops-alerts",
+    "always_escalate": [
+      "money-amount-change",
+      "claim-or-cargo-damage",
+      "customer-escalation-language",
+      "unrecognized-workflow"
+    ]
+  }
+}
