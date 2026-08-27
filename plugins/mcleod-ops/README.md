@@ -80,7 +80,7 @@ Start Claude Code from that same shell so it inherits the variables. They live i
 Two things that will bite you if nobody says them out loud:
 
 - **Claude Code cloud sessions cannot use the `imap` adapter.** Outbound port 993 is blocked there — only HTTPS/443 through the agent proxy is reachable. Run the IMAP path from a local session (which is also where Credential Manager lives), or use the `microsoft365`/`gmail` connector adapters in the cloud.
-- **Microsoft has broadly disabled basic auth for IMAP in Exchange Online.** An app password may be refused regardless of whether it is correct. `--test` reports the server's own rejection so you can tell a bad credential from a disabled protocol.
+- **Microsoft has broadly disabled basic auth for IMAP in Exchange Online.** An app password will be refused regardless of whether it is correct, with `NO AUTHENTICATE failed. Provided authentication mechanism is not supported`. If you see that, the `imap` adapter is a dead end for that tenant — no amount of credential fixing helps. Switch to the `microsoft365` adapter and grant the signing-in account **Full Access** to the mailbox in the M365 admin center. That path needs no app password at all. (The remaining alternative, if Full Access is not grantable, is OAuth2/XOAUTH2 via a registered Entra app — considerably more setup.)
 
 **McLeod** supports three adapters, because shops integrate with it differently:
 
@@ -106,6 +106,8 @@ On Windows, load a stored McLeod credential and check what the endpoint expects 
 ```
 
 A 401 or 403 with a `WWW-Authenticate` header tells you the real scheme — put that in `sources.json` rather than assuming.
+
+**A 401 with no `WWW-Authenticate` header means something different**: the endpoint is not asking for HTTP auth at all. Either the scheme is not Basic, or the URL is a base path rather than a callable resource. Read the API documentation for the real login flow instead of trying other schemes against production.
 
 > **The REST endpoint paths and auth header names in the example are placeholders.** They vary by McLeod product (LoadMaster vs PowerBroker), release, and how your instance was provisioned. Fill them in from your own McLeod API documentation and confirm them against a non-production instance before enabling. The watcher is instructed to report a failed query rather than probe for a working path — guessing at endpoints against a production TMS is not something you want an agent doing.
 

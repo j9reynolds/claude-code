@@ -144,14 +144,29 @@ if ($TestHttp) {
     try {
         $resp = Invoke-WebRequest -Uri $TestHttp -Headers $headers -Method Get -TimeoutSec 30 -SkipHttpErrorCheck
         Write-Host "  HTTP $($resp.StatusCode) $($resp.StatusDescription)" -ForegroundColor Green
-        $challenge = $resp.Headers['WWW-Authenticate']
-        if ($challenge) { Write-Host "  WWW-Authenticate: $challenge" -ForegroundColor Yellow }
-        Write-Host "  Content-Type: $($resp.Headers['Content-Type'])"
-        $preview = ($resp.Content | Out-String).Trim()
-        if ($preview.Length -gt 300) { $preview = $preview.Substring(0, 300) + "..." }
-        if ($preview) { Write-Host "  body: $preview" }
-        Write-Host "`n  401/403 with a WWW-Authenticate header tells you the scheme this endpoint wants;" -ForegroundColor Yellow
-        Write-Host "  put that scheme in sources.json rather than assuming Basic." -ForegroundColor Yellow
+
+        Write-Host "  --- response headers ---"
+        foreach ($key in $resp.Headers.Keys) {
+            Write-Host "  $key`: $(($resp.Headers[$key]) -join ', ')"
+        }
+
+        # Error pages are usually HTML; the sentence that matters is buried in markup.
+        $text = [regex]::Replace(($resp.Content | Out-String), '(?s)<script.*?</script>|<style.*?</style>', ' ')
+        $text = [regex]::Replace($text, '<[^>]+>', ' ')
+        $text = [System.Net.WebUtility]::HtmlDecode($text)
+        $text = [regex]::Replace($text, '\s+', ' ').Trim()
+        if ($text.Length -gt 600) { $text = $text.Substring(0, 600) + "..." }
+        if ($text) { Write-Host "  --- body (tags stripped) ---`n  $text" }
+
+        if (-not $resp.Headers['WWW-Authenticate']) {
+            Write-Host "`n  No WWW-Authenticate header." -ForegroundColor Yellow
+            Write-Host "  A 401 without a challenge means the endpoint is not asking for HTTP auth at all -" -ForegroundColor Yellow
+            Write-Host "  so Basic is likely the wrong scheme, or this URL is a base path rather than a" -ForegroundColor Yellow
+            Write-Host "  callable resource. Check the API documentation for the real login flow." -ForegroundColor Yellow
+        } else {
+            Write-Host "`n  The WWW-Authenticate header above names the scheme this endpoint wants;" -ForegroundColor Yellow
+            Write-Host "  put that scheme in sources.json rather than assuming Basic." -ForegroundColor Yellow
+        }
     } catch {
         Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
     }
