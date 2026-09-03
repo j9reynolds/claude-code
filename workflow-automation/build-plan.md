@@ -24,51 +24,77 @@ auto-approves within threshold or routes a one-click decision to a manager.
 - From McLeod (system of record, preferred over the email's hand-typed values):
   order, customer, carrier, posted accessorial rates, free-time terms, appointment.
 
+**The engine now encodes the full signed carrier Rate Confirmation, not just the four
+accessorials.** It auto-applies every charge whose conditions are met — both accessorials
+payable to the carrier and deductions from the carrier — and gates overrides by role.
+
 **Logic (implemented in `reference-implementation/accessorial_rules.py`).**
-1. Parse the request into a normalized record.
-2. Compute billable duration = out - in - free-time; round per policy.
-3. Compute `pay_amount` (to carrier) and `bill_amount` (to customer) from posted rates.
-4. Classify:
-   - `AUTO_APPROVE` if within the policy auto-approve threshold and inputs are consistent.
-   - `NEEDS_REVIEW` if over threshold, missing a POD, times inconsistent, or customer
-     unresolved.
-   - `REJECT_SUGGESTED` if duration <= free time (no accessorial owed).
-5. Emit a structured decision record + a human-readable summary.
+1. Take normalized `LoadFacts` (times, team-service flag, linehaul, tracking/POD/check-call
+   status, and the eligibility flags below). In production these come from McLeod + the POD.
+2. **Accessorials payable to carrier:**
+   - *Detention* — hours over free time x rate (solo/team), **capped at the layover rate**.
+   - *Layover* — flat solo/team.
+   - *Driver assist* — only if pre-approved; never auto-applies, always routes to review.
+   - *TONU* — flat solo/team.
+3. **Deductions from carrier (auto-apply on the trigger):** MacroPoint tracking failure and
+   late-service and direct-run (greater of $500 or 20% linehaul), missed/late check-calls
+   ($50 each), late POD ($150) and continued delay ($250/day), missing signed rate con
+   ($50), exclusive-use violation (100% rate reduction).
+4. **Eligibility gates from the Rate Confirmation:** an accessorial is `REJECTED` when the
+   carrier was at fault; `NEEDS_REVIEW` when signed facility proof or the revised signed
+   rate con is missing; `HELD_PENDING_CUSTOMER` for detention/layover/TONU/deadhead/
+   re-consignment until Delta is paid by its customer. Otherwise `APPLIED` if within the
+   auto-approve ceiling, else `NEEDS_REVIEW`.
+5. Emit a structured assessment (net carrier pay, every line item, its status and basis).
+
+**Permission-gated override.** Every auto-applied charge is overridable **only** by a user
+whose role is `MANAGER`, `ADMIN`, or `SUPER_ADMIN`; a regular `USER` attempt is refused. An
+override requires a reason note (audit trail) and nets the line to $0. This mirrors the
+requirement that only privileged users can waive an auto-applied charge.
+
+**Also produces the customer-bill side.** The same rules drive the customer invoice line
+via the markup table in `customer-accessorial-rate-sheet.md` (pending McLeod AR validation).
 
 **Guardrails.**
-- **Dry-run default:** the engine only *classifies and explains*; it does not email,
-  approve in McLeod, or create a payable.
-- Auto-approve threshold is configuration, set by your policy, and starts low.
-- Every auto-approve is logged and reversible; managers get a daily digest to spot-check.
-- Customer-unresolved or POD-missing always -> NEEDS_REVIEW (never auto).
+- **Dry-run default:** the engine computes, classifies, and explains; it sends no email,
+  writes nothing to McLeod, and creates no payable or deduction.
+- Auto-approve ceiling is configuration, set by your policy, and starts low.
+- Fail-safe: missing proof, carrier fault, unpaid customer, inconsistent times, or an amount
+  over the ceiling never auto-applies.
+- Overrides are role-checked and logged.
 
-**Access required to go live.** McLeod read (orders/stops/rates/appointments) + write
-(create accessorial / approval); M365 mailbox read for the trigger; a written accessorial
-policy (free time, rounding, per-type rates, auto-approve ceiling).
+**Access required to go live.** McLeod read (orders/stops/rates/appointments/tracking) +
+write (create accessorial / deduction / approval); M365 mailbox read for the trigger; the
+role/permission map (who is MANAGER/ADMIN/SUPER_ADMIN). The policy numbers are already
+captured from the signed Rate Confirmation.
 
-**Rollout.** (a) Dry-run over 2-4 weeks of historical requests; compare the engine's
-calls to what managers actually approved; tune thresholds. (b) Shadow mode: engine posts
-its recommendation into the thread, humans still click approve. (c) Auto-approve under the
-agreed ceiling; everything else stays one-click.
+**Rollout.** (a) Dry-run over 2-4 weeks of historical loads; compare the engine's calls to
+what managers actually approved; tune the ceiling. (b) Shadow mode: engine posts its
+assessment into the thread, humans still click approve. (c) Auto-apply under the agreed
+ceiling; everything over it, plus every override, stays a privileged one-click.
 
 ---
 
 ## #2 Accounting: ACH ingest, intercompany, GL-coded AP  —  SPEC (phased, finance sign-off)
 
-**Goal.** Eliminate the daily/weekly copy-paste across bank portals, Excel, McLeod, and
-two QuickBooks files.
+**Goal.** Eliminate the daily/weekly copy-paste across bank portals, Excel, and the
+accounting ledger. The accounting system of record is **McLeod's accounting module** (per
+the PM); the mined SOP also references **QuickBooks** for the DFS / DFS-EL entities —
+confirm which entities post where before scoping (see the discrepancy note in
+`discovery-findings.md`). The design below targets whichever ledger is current per entity.
 
 **Phase A — read-only reconciliation (low risk, build first).**
 - Pull ACH credits (cleared + pending) from Chase + Huntington via bank feed
   (BAI2/CSV/API), normalize, and replace the hand-maintained Excel "ACH spreadsheet" with
   a generated, sorted, classified ledger view.
-- Reconcile against McLeod AR / QuickBooks; surface only the exceptions.
+- Reconcile against the McLeod accounting module (and QuickBooks where an entity still uses
+  it); surface only the exceptions.
 
 **Phase B — proposed-entries queue (human posts).**
 - Generate the intercompany journal-entry pairs (the mechanical "duplicate the record,
-  flip debit/credit, match the date" step) as *proposed* QuickBooks entries a human
-  reviews and posts with one click. Same for ProLease -> QuickBooks invoice export,
-  with import-error auto-remediation.
+  flip debit/credit, match the date" step) as *proposed* ledger entries a human reviews and
+  posts with one click. Same for ProLease -> accounting invoice export, with import-error
+  auto-remediation.
 - GL coding for AP suggested from the documented decision tree (company truck / LTB /
   trailer / driver-deduction / recruiting) as a rules table; human confirms.
 
@@ -81,8 +107,9 @@ two QuickBooks files.
 dual-control on anything that pays; **database backups must exist first** (currently an
 open urgent item). No phase moves money without finance sign-off.
 
-**Access required.** Bank portal feeds (read; later payment initiation), QuickBooks (both
-files), McLeod (cash receipts/AR), ProLease export. Finance owner as approver.
+**Access required.** Bank portal feeds (read; later payment initiation), the McLeod
+accounting module (cash receipts / AR / AP / GL; plus QuickBooks for any entity still on
+it), ProLease export. Finance owner as approver.
 
 ---
 
@@ -179,7 +206,8 @@ To move any of these from SPEC to live, the highest-leverage connections to add 
 
 1. **McLeod (TMS)** — read for #1/#3/#4/#5/#6; write for #1. This is the keystone; it
    unblocks five of seven.
-2. **QuickBooks (x2) + bank feeds** — for #2 (finance sign-off required).
+2. **McLeod accounting module + bank feeds** (plus QuickBooks for any entity still on it) —
+   for #2 (finance sign-off required).
 3. **Project44 + MacroPoint event feeds** — for #4 (partly present already).
 4. **Written policies** — accessorial thresholds (#1) and GL coding rules (#2). These are
    decisions only you can make; the automations encode them, they don't invent them.

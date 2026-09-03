@@ -8,10 +8,11 @@ level; individual names and account numbers are intentionally omitted.
 ## Operating context
 
 DGL/DFS is a freight brokerage + carrier group (DGL brokerage, DFS asset/carrier, DFS
-Equipment Leasing for trailers). **McLeod** is the TMS system of record. Surrounding it:
-Microsoft 365 (email is the primary operational channel), HubSpot CRM, QuickBooks
-(two company files), Chase + Huntington bank portals, ProLease (trailer rentals),
-Project44 + MacroPoint (tracking), and load boards (Truckstop, DAT, MODE IQ). An
+Equipment Leasing for trailers). **McLeod** is the TMS *and* the accounting system of
+record — AR/AP/GL run in **McLeod's accounting module** (confirmed by the PM). Surrounding
+it: Microsoft 365 (email is the primary operational channel), HubSpot CRM, Chase +
+Huntington bank portals, ProLease (trailer rentals), Project44 + MacroPoint (tracking),
+and load boards (Truckstop, DAT, MODE IQ). An
 internal software program is already underway (in-house TMS, "DGL Command Center",
 tracking portals, P44 push, encrypted rate cons) — visible in Linear and in automated
 "[TEST]" quote emails already flowing.
@@ -50,7 +51,15 @@ delayed, and stalled approvals strain carrier relationships.
 ## Finding 2 — Accounting: daily/weekly/monthly manual data movement
 
 **Pattern.** A documented back-office role runs a large, brittle, copy-paste routine
-across bank portals, Excel, McLeod, QuickBooks (x2 entities), and ProLease.
+across bank portals, Excel, McLeod (accounting module), and ProLease.
+
+> **Discrepancy to confirm.** The PM confirms the accounting system of record is
+> **McLeod's accounting module, not QuickBooks.** The back-office SOP that was mined,
+> however, describes entering records into "DFS QB" / "DFS EL QB" (QuickBooks) for the
+> DFS and DFS Equipment Leasing entities. Best read: DGL runs on McLeod accounting while
+> the DFS/DFS-EL entities still use (or recently used) QuickBooks — or the SOP is legacy.
+> Confirm which entities post where before scoping #2; the automation targets whatever is
+> current. References below reflect the SOP as written.
 
 **Evidence.** A role SOP document details, among others:
 - **Daily:** log into two bank portals, pull ACH credits (cleared + pending), copy/paste
@@ -68,7 +77,8 @@ across bank portals, Excel, McLeod, QuickBooks (x2 entities), and ProLease.
   (gas, water, dental, security) from emailed bills; match toll bills to trucks.
 
 **Why it automates well.** Almost every step is deterministic data movement between
-systems that have APIs or structured exports (bank BAI/CSV, QuickBooks, McLeod). The GL
+systems that have APIs or structured exports (bank BAI/CSV, McLeod accounting, and
+QuickBooks where still used). The GL
 decision tree is a rules table. The intercompany duplication is mechanical.
 
 **Toil.** This is the single largest concentration of manual hours found, and the

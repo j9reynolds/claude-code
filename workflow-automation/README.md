@@ -19,14 +19,15 @@ want to remove lives in the workarounds people stop using the moment they feel w
 | `discovery-findings.md` | What the systems mining surfaced (step 3): the recurring, structured, rules-based patterns worth automating, with the evidence behind each. |
 | `opportunity-backlog.md` | Scored & ranked backlog (step 4): frequency x time x error-cost vs. build-effort & risk, with a recommended sequence. |
 | `build-plan.md` | Implementation specs for the winners (step 5): trigger, data sources, logic, guardrails, access required, and rollout — one section per opportunity. |
-| `reference-implementation/` | A **safe, runnable** dry-run rules engine for the #1 opportunity (accessorial approvals). Sends nothing, moves no money, writes to no system of record. Pure, unit-tested logic you can lift into production behind a human approval gate. |
+| `customer-accessorial-rate-sheet.md` | **Pilot analysis:** should customer accessorials be marked up, and a draft standard rate sheet — built from the Command Center's existing bill/pay guidance and the carrier Rate Confirmation, pending McLeod AR actuals. |
+| `reference-implementation/` | A **safe, runnable** dry-run engine for the #1 opportunity, now encoding the full carrier **Rate Confirmation** (all auto-applied accessorials + deductions, eligibility gates, and a permission-gated manager override). Sends nothing, moves no money, writes to no system of record. Pure, unit-tested logic (20/20 passing). |
 | `employee-announcement.md` | A ready-to-send heads-up to staff. Recommended before any automation goes live. |
 
 ## Systems analyzed in this pass
 
 Read-only, aggregate analysis of: Microsoft 365 (Outlook, Teams, SharePoint),
-HubSpot CRM, Linear, and the connectors' surfaced metadata. McLeod (TMS), QuickBooks,
-the bank portals (Chase/Huntington), ProLease, Project44, MacroPoint, and the load
+HubSpot CRM, Linear, and the connectors' surfaced metadata. McLeod (TMS + accounting
+module), the bank portals (Chase/Huntington), ProLease, Project44, MacroPoint, and the load
 boards (Truckstop/DAT/MODE) were **referenced from their process artifacts** but were
 not directly connected in this pass — connecting them is part of the access ask in
 `build-plan.md`.
@@ -47,8 +48,8 @@ not directly connected in this pass — connecting them is part of the access as
 
 | Winner | Status in this repo |
 |--------|--------------------|
-| #1 Accessorial approval triage | **Reference rules engine built** (dry-run, no side effects). Live wiring gated on McLeod access + your approval-policy sign-off. |
-| #2 Accounting / ACH / intercompany | Build spec only. Gated on bank + QuickBooks + McLeod access and finance sign-off (touches money across two legal entities). |
+| #1 Accessorial approval triage | **PILOT — engine built & expanded** to the full Rate Confirmation, with permission-gated override (dry-run, no side effects). Customer markup analysis + draft rate sheet delivered. Live wiring gated on McLeod access + the role/permission map. |
+| #2 Accounting / ACH / intercompany | Build spec only. Gated on bank + McLeod accounting-module access and finance sign-off (touches money across two legal entities). |
 | #3 Rate-quote productionization | Build spec only. Largely already built internally ("DGL Command Center"); spec covers closing the loop. |
 | #4 Load-status auto-relay | Build spec only. Leverages P44/MacroPoint already in place. |
 | #5 Document auto-filing (POD / rate-con) | Build spec only. Low risk; good early win. |

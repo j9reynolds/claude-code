@@ -73,5 +73,5 @@ program). They exist to sequence work, not to promise numbers.
 - #1, #3, #4, #6 all depend on **McLeod read access** (orders, stops, times, rates).
 - #1 and #2 depend on a **written policy** (accessorial thresholds; GL coding rules).
 - #3 and #6 depend on **#7** (customer-domain matching) for correct attribution.
-- #2 depends on **bank + QuickBooks access** and finance sign-off, and on **database
+- #2 depends on **bank + McLeod accounting-module access** and finance sign-off, and on **database
   backups existing first** (currently an open urgent item).
