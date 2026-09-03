@@ -10,14 +10,36 @@ network (IT, a DBA, or the McLeod admin).
 - **Database:** `LME_1720` (McLeod LoadMaster Enterprise, SQL Server)
 - **Access needed:** a **read-only** SQL login. The extract issues `SELECT`s only.
 
-## Why this can't run from the Claude session
+## Why this can't run from the Claude session (SQL *or* API)
 
 The Claude session runs in an isolated cloud sandbox whose only outbound path is HTTPS
-through a managed proxy. It has **no network route to `DB02`** — confirmed from inside the
-sandbox: `DB02` does not resolve and TCP/1433 is unreachable. This is a network-topology
-boundary, not a permission setting. So the query is delivered as **runnable code you run on
-a machine that can see `DB02`**, and the results come back here (paste the CSV, or connect
-McLeod through a supported connector) to produce the final number.
+through a **managed egress proxy that allowlists specific hosts** (the wired-in connectors —
+Microsoft 365, HubSpot, etc.). Two things were confirmed from inside the sandbox:
+
+- **Direct SQL to `DB02` is impossible:** `DB02` does not resolve and TCP/1433 has no route.
+- **The McLeod REST API is also unreachable:** the egress proxy returns **HTTP 403 (tunnel
+  refused) for non-allowlisted hosts** — even McLeod's public domain. So an on-prem *or* a
+  public McLeod API endpoint is blocked from this session regardless of credentials.
+
+This is a network/allowlist boundary, not a permission toggle. Two ways forward:
+
+1. **Run the extractor yourself** (SQL or API path below) on a machine that can reach
+   McLeod, and send back `loads_365d.csv`.
+2. **Add McLeod as a first-party connector** for Claude (the same way M365/HubSpot are
+   wired in). That routes through the allowlisted path and is the durable "connect Claude
+   to McLeod" answer — worth doing once, since it also unblocks five of the seven backlog
+   opportunities.
+
+## Two extract paths (pick whichever your access fits)
+
+- **`mcleod_leakage_extract.sql` + `mcleod_extract.py`** — direct read-only SQL against
+  `DB02` / `LME_1720`. Best if you have a read-only DB login / replica.
+- **`mcleod_api_extract.py`** — the McLeod **REST API** path. Reads `MCLEOD_API_BASE` and
+  `MCLEOD_API_TOKEN` from the environment (no secret in the repo). `--probe` tests
+  reachability + auth; `--run` writes the CSV. Use this if API access is easier to grant
+  than DB access, or if your McLeod API is internet-facing.
+
+Both paths emit the identical CSV that `leakage_model.py --csv` consumes.
 
 ## Files
 
