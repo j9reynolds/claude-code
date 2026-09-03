@@ -221,27 +221,109 @@ def run_leakage(records: list, policy: RateConfirmationPolicy,
 # The McLeod export schema this model needs to run on real data
 # --------------------------------------------------------------------------------------
 
+#: Canonical CSV column contract shared with mcleod-extract/. One row per load delivered
+#: in the trailing 365 days. Y/N columns carry "Y"/"N" (blank = unknown -> handled below).
+CANONICAL_COLUMNS = [
+    # identity / scope
+    "pro_number", "delivered_date", "customer", "carrier", "team_service",
+    "linehaul_rate",
+    # operational facts (what happened at the stops)
+    "stop_check_in", "stop_check_out", "carrier_at_fault",
+    "signed_facility_proof", "revised_signed_ratecon",
+    "customer_paid", "layover", "tonu", "stopoff_count",
+    "lumper_cost", "driver_assist_preapproved",
+    # penalty triggers
+    "macropoint_tracking_provided", "arrived_on_time",
+    "direct_run_violation", "missed_check_calls_count",
+    "pod_late", "pod_days_late", "signed_ratecon_returned",
+    "exclusive_use_violation",
+    # actuals from AR / settlement (what was really billed/paid/deducted)
+    "actual_customer_accessorial_billed", "actual_carrier_accessorial_paid",
+    "actual_deductions_taken",
+]
+
+
 def required_mcleod_columns() -> list:
-    """One row per load delivered in the trailing 365 days. Columns needed to run this
-    model on Delta's actuals instead of sample data."""
-    return [
-        # identity / scope
-        "pro_number", "delivered_date", "customer", "carrier", "team_service (Y/N)",
-        "linehaul_rate",
-        # operational facts (what happened at the stops)
-        "stop_check_in", "stop_check_out", "carrier_at_fault (Y/N)",
-        "signed_facility_proof (Y/N)", "revised_signed_ratecon (Y/N)",
-        "customer_paid (Y/N)", "layover (Y/N)", "tonu (Y/N)", "stopoff_count",
-        "lumper_cost", "driver_assist_preapproved (Y/N)",
-        # penalty triggers
-        "macropoint_tracking_provided (Y/N)", "arrived_on_time (Y/N)",
-        "direct_run_violation (Y/N)", "missed_check_calls_count",
-        "pod_late (Y/N)", "pod_days_late", "signed_ratecon_returned (Y/N)",
-        "exclusive_use_violation (Y/N)",
-        # actuals from AR / settlement (what was really billed/paid/deducted)
-        "actual_customer_accessorial_billed", "actual_carrier_accessorial_paid",
-        "actual_deductions_taken",
-    ]
+    """The McLeod export schema this model runs on. See CANONICAL_COLUMNS."""
+    return list(CANONICAL_COLUMNS)
+
+
+# --------------------------------------------------------------------------------------
+# Load the real McLeod export (CSV) -> LoadRecords
+# --------------------------------------------------------------------------------------
+
+def _yn(v: str, default: bool) -> bool:
+    """Parse a Y/N cell. Blank/unknown -> `default` (chosen per-field to keep the result a
+    conservative floor, not an inflated headline)."""
+    s = (v or "").strip().upper()
+    if s in ("Y", "YES", "TRUE", "1"):
+        return True
+    if s in ("N", "NO", "FALSE", "0"):
+        return False
+    return default
+
+
+def _dt(v: str):
+    s = (v or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S",
+                "%m/%d/%Y %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _num(v: str) -> float:
+    s = (v or "").strip().replace("$", "").replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def load_records_from_csv(path: str) -> list:
+    """Read a McLeod export (CANONICAL_COLUMNS) into LoadRecords. Blank Y/N cells fall to
+    conservative defaults: penalties assume compliance (no charge) and accessorials assume
+    the carrier was not at fault only where a charge event is already evidenced."""
+    import csv as _csv
+    recs = []
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        for r in _csv.DictReader(fh):
+            facts = LoadFacts(
+                pro_number=(r.get("pro_number") or "").strip(),
+                team_service=_yn(r.get("team_service"), False),
+                linehaul_rate=_num(r.get("linehaul_rate")),
+                check_in=_dt(r.get("stop_check_in")),
+                check_out=_dt(r.get("stop_check_out")),
+                carrier_at_fault=_yn(r.get("carrier_at_fault"), False),
+                has_signed_facility_proof=_yn(r.get("signed_facility_proof"), False),
+                has_revised_signed_ratecon=_yn(r.get("revised_signed_ratecon"), False),
+                customer_has_paid=_yn(r.get("customer_paid"), False),
+                driver_assist_preapproved=_yn(r.get("driver_assist_preapproved"), False),
+                layover_claimed=_yn(r.get("layover"), False),
+                tonu_claimed=_yn(r.get("tonu"), False),
+                tracking_provided=_yn(r.get("macropoint_tracking_provided"), True),
+                arrived_on_time=_yn(r.get("arrived_on_time"), True),
+                direct_run_violation=_yn(r.get("direct_run_violation"), False),
+                missed_check_calls=int(_num(r.get("missed_check_calls_count"))),
+                pod_late=_yn(r.get("pod_late"), False),
+                pod_days_late=int(_num(r.get("pod_days_late"))),
+                signed_ratecon_returned=_yn(r.get("signed_ratecon_returned"), True),
+                exclusive_use_violation=_yn(r.get("exclusive_use_violation"), False),
+            )
+            recs.append(LoadRecord(
+                facts=facts,
+                delivered_on=_dt(r.get("delivered_date")),
+                stopoff_count=int(_num(r.get("stopoff_count"))),
+                lumper_cost=_num(r.get("lumper_cost")),
+                actual_customer_billed=_num(r.get("actual_customer_accessorial_billed")),
+                actual_carrier_paid=_num(r.get("actual_carrier_accessorial_paid")),
+                actual_deductions_taken=_num(r.get("actual_deductions_taken")),
+            ))
+    return recs
 
 
 # --------------------------------------------------------------------------------------
@@ -280,26 +362,45 @@ def _sample_records() -> list:
     ]
 
 
-def _demo() -> None:
+def _report(records: list, header: str) -> None:
     policy = RateConfirmationPolicy()
     sheet = CustomerRateSheet()
-    rep = run_leakage(_sample_records(), policy, sheet)
+    rep = run_leakage(records, policy, sheet)
     print("=" * 66)
-    print(" ACCESSORIAL LEAKAGE — SAMPLE DATA (ILLUSTRATIVE, NOT DELTA ACTUALS)")
+    print(f" {header}")
     print("=" * 66)
     print(rep.render())
     print("-" * 66)
-    print(" Per-load:")
-    for ll in rep.per_load:
-        print(f"   {ll.pro_number:<10}  underbill ${ll.customer_underbilling:>7.2f}  "
-              f"un-enforced ${ll.deduction_under_enforcement:>7.2f}  "
-              f"overpay ${ll.carrier_overpayment:>6.2f}  = ${ll.total:>7.2f}")
+    top = sorted(rep.per_load, key=lambda l: l.total, reverse=True)[:15]
+    print(f" Top {len(top)} loads by leakage:")
+    for ll in top:
+        print(f"   {ll.pro_number:<12}  underbill ${ll.customer_underbilling:>8.2f}  "
+              f"un-enforced ${ll.deduction_under_enforcement:>8.2f}  "
+              f"overpay ${ll.carrier_overpayment:>7.2f}  = ${ll.total:>8.2f}")
     print("=" * 66)
+
+
+def _demo() -> None:
+    _report(_sample_records(),
+            "ACCESSORIAL LEAKAGE — SAMPLE DATA (ILLUSTRATIVE, NOT DELTA ACTUALS)")
     print(" To run on real data, provide a McLeod export with these columns:")
     for c in required_mcleod_columns():
         print(f"   - {c}")
+    print(" ...then:  python3 leakage_model.py --csv loads_365d.csv")
     print("=" * 66)
 
 
+def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description="Accessorial leakage model.")
+    ap.add_argument("--csv", help="McLeod export CSV (canonical columns). Omit for the sample demo.")
+    args = ap.parse_args()
+    if args.csv:
+        recs = load_records_from_csv(args.csv)
+        _report(recs, f"ACCESSORIAL LEAKAGE — {len(recs)} loads from {args.csv}")
+    else:
+        _demo()
+
+
 if __name__ == "__main__":
-    _demo()
+    main()
