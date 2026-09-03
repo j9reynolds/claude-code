@@ -20,6 +20,7 @@ want to remove lives in the workarounds people stop using the moment they feel w
 | `opportunity-backlog.md` | Scored & ranked backlog (step 4): frequency x time x error-cost vs. build-effort & risk, with a recommended sequence. |
 | `build-plan.md` | Implementation specs for the winners (step 5): trigger, data sources, logic, guardrails, access required, and rollout — one section per opportunity. |
 | `customer-accessorial-rate-sheet.md` | **Pilot analysis:** should customer accessorials be marked up, and a draft standard rate sheet — built from the Command Center's existing bill/pay guidance and the carrier Rate Confirmation, pending McLeod AR actuals. |
+| `leakage-analysis.md` | **365-day loss analysis:** why the real figure needs a McLeod export (not connected), the three loss buckets, the exact export schema required, and an illustrative sample run. The calculator is `reference-implementation/leakage_model.py`. |
 | `reference-implementation/` | A **safe, runnable** dry-run engine for the #1 opportunity, now encoding the full carrier **Rate Confirmation** (all auto-applied accessorials + deductions, eligibility gates, and a permission-gated manager override). Sends nothing, moves no money, writes to no system of record. Pure, unit-tested logic (20/20 passing). |
 | `employee-announcement.md` | A ready-to-send heads-up to staff. Recommended before any automation goes live. |
 
