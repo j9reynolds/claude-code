@@ -98,36 +98,58 @@ def parse_dt(v):
     return None
 
 
+DROP_DWELL_H = 18.0     # a single-stop on-site dwell beyond this is a trailer drop / relay,
+                        # not live detention — excluded so drops don't masquerade as detention.
+
+
 def detention_from_stops(stops_p, det_billed_orders):
     """APPOINTMENT-BASED detention over all stops (Query E / stops.csv):
-    clock = (appointment_early or actual_arrival) + 2h; billable = checkout - clock,
-    capped at on-site time and at the $150 layover per stop. Sums per order and reports
-    the un-billed gap. Uses McLeod actual times (approximate; POD is authoritative)."""
+    per stop, clock = (appointment_early or actual_arrival) + 2h; billable = checkout - clock,
+    capped at on-site time and at the $150 layover PER STOP; stops with on-site dwell beyond
+    DROP_DWELL_H are treated as drops and skipped. Times are stop-local wall clock (correct
+    for a within-stop duration; only a dwell crossing a DST change is off by 1h — negligible).
+    McLeod actual times are APPROXIMATE — the POD is authoritative per load."""
     from collections import defaultdict
-    per_order = defaultdict(float)
+    per_order_dollars = defaultdict(float)   # drop-excluded (defensible)
+    per_order_raw = defaultdict(float)        # includes long dwells (upper bound)
+    drops = 0
     with open(stops_p, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             arr, dep = parse_dt(r.get("actual_arrival")), parse_dt(r.get("actual_departure"))
-            if not arr or not dep or dep < arr:
+            if not arr or not dep or dep <= arr:
                 continue
             appt = parse_dt(r.get("appointment_early"))
             ref = appt or arr
-            start = ref.timestamp() + FREE_MIN * 60
-            onsite = (dep - arr).total_seconds()
-            billable_s = max(0.0, min(dep.timestamp() - start, onsite))
-            per_order[clean(r.get("order_id"))] += billable_s / 3600.0
-    total_hours = sum(per_order.values())
-    entitled = sum(min(h * DET_RATE_HR, LAYOVER_CAP) for h in per_order.values() if h > 0)
-    gap_orders = [o for o, h in per_order.items() if h > 0 and o not in det_billed_orders]
-    gap_dollars = sum(min(per_order[o] * DET_RATE_HR, LAYOVER_CAP) for o in gap_orders)
+            onsite_h = (dep - arr).total_seconds() / 3600.0
+            billable_h = max(0.0, min((dep - ref).total_seconds() / 3600.0 - FREE_MIN / 60.0,
+                                      onsite_h))
+            if billable_h <= 0:
+                continue
+            dollars = min(billable_h * DET_RATE_HR, LAYOVER_CAP)  # cap per stop
+            oid = clean(r.get("order_id"))
+            per_order_raw[oid] += dollars
+            if onsite_h > DROP_DWELL_H:
+                drops += 1
+            else:
+                per_order_dollars[oid] += dollars
+
+    def summarize(per_order):
+        entitled = sum(per_order.values())
+        gap = {o: d for o, d in per_order.items() if o not in det_billed_orders}
+        return entitled, sum(gap.values()), len(gap)
+
+    # per-load cap = detention "maxes out at layover" read as once per load (conservative)
+    per_order_loadcap = {o: min(d, LAYOVER_CAP) for o, d in per_order_dollars.items()}
+    ent_stop, gap_stop, n_stop = summarize(per_order_dollars)      # $150 per stop
+    ent_load, gap_load, n_load = summarize(per_order_loadcap)      # $150 per load
     print("-" * 74)
     print(" DETENTION — APPOINTMENT-BASED (from stops.csv; supersedes the dwell estimate)")
-    print(f"   Loads with billable detention (appt+2h rule): "
-          f"{sum(1 for h in per_order.values() if h > 0):,}")
-    print(f"   Entitled detention @ ${DET_RATE_HR:.0f}/h capped ${LAYOVER_CAP:.0f}: ${entitled:,.0f}")
-    print(f"   ...on loads with NO customer detention charge:  ${gap_dollars:,.0f} "
-          f"({len(gap_orders):,} loads)")
-    print("   (McLeod actual times are approximate; POD is authoritative per load.)")
+    print(f"   Rule: clock = appointment+2h (else arrival+2h) -> checkout; drops >{DROP_DWELL_H:.0f}h excluded.")
+    print(f"   Un-billed detention (no customer detention charge on the load):")
+    print(f"      cap $150 per LOAD  (conservative): ${gap_load:,.0f}   ({n_load:,} loads)")
+    print(f"      cap $150 per STOP  (PU + DEL):     ${gap_stop:,.0f}   ({n_stop:,} loads)")
+    print("   Both use McLeod times (approximate) and DO NOT yet remove carrier-fault /")
+    print("   no-signed-doc loads or use POD times — so true recoverable is a fraction below.")
 
 
 def main(loads_p, oc_p, cp_p, cc_p, stops_p=None):

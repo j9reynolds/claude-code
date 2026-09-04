@@ -72,13 +72,19 @@ Full results table in `leakage-analysis.md`; customer-level detail kept OUT of g
 DETENTION RULE (locked with PM): clock starts at APPOINTMENT (McLeod sched_arrive_early)
 + 2h when an appointment exists — even if the carrier arrived early — else arrival + 2h;
 ends at check-out; caps at layover. Engine updated (accessorial_rules.py, 21/21 tests).
-The earlier $503k was arrival-based and OVERSTATES (appointment clock starts later for
-early arrivals). Correct population recompute needs per-stop appointment+times → Query E
-(`stops.csv`); analyze_leakage.py has `detention_from_stops()` ready for it.
-POD IS AUTHORITATIVE for check-in/out — McLeod actual_arrival/departure are unreliable
-(order 0169514: McLeod 12:15/19:15 vs POD 11:15/18:50). Live engine reads POD (image type
-04-Temporary POD, else 01-BOL/POD) per event via `get_image`; 26k retroactive POD-read is
-not feasible in-session, so the population number uses McLeod times as an approximation.
+CORRECTED with stops.csv (Query E, 56,744 stops): un-billed detention = **$691k (cap per
+load) – $742k (cap per stop)** across 11,487 loads, drops >18h excluded. This is HIGHER than
+the first $503k pass because it counts BOTH pickup and delivery and uses the appointment
+clock. Still pre-eligibility (carrier-fault/no-signed-doc not removed). Per-stop vs per-load
+cap is a policy choice (Rate Con "maxes out at layover" is ambiguous).
+Query E join (PM-corrected): stop → orders directly on `s.order_id` (NOT via movement).
+Stop times are stop-LOCAL wall clock — within-stop durations need no tz conversion; only a
+dwell crossing a DST change is off 1h (negligible). POD IS AUTHORITATIVE for check-in/out —
+McLeod actual times run ~25–60min off (0169514: McLeod 12:15/19:15 vs POD 11:15/18:50).
+POD-READ WIRED: `reference-implementation/pod_reader.py` — read_pod_times(pro, stop_date,
+get_image_fn, ocr_fn) tries image type 04-Temp POD then 01-BOL/POD, parses in/out, returns
+(None,None)→NEEDS_REVIEW if unreadable. Live agent injects get_image + OCR; per-event only
+(26k retroactive POD read not feasible in-session).
 RATE SHEET finalized in `customer-accessorial-rate-sheet.md` from realized bill÷pay ratios
 (detention 1.78x ok; layover 0.84x = LOSS, fix to $225/$375; TONU 1.11x thin -> $225/$350).
 
