@@ -82,10 +82,15 @@ Query E join (PM-corrected): stop → orders directly on `s.order_id` (NOT via m
 Stop times are stop-LOCAL wall clock — within-stop durations need no tz conversion; only a
 dwell crossing a DST change is off 1h (negligible). POD IS AUTHORITATIVE for check-in/out —
 McLeod actual times run ~25–60min off (0169514: McLeod 12:15/19:15 vs POD 11:15/18:50).
-POD-READ WIRED: `reference-implementation/pod_reader.py` — read_pod_times(pro, stop_date,
-get_image_fn, ocr_fn) tries image type 04-Temp POD then 01-BOL/POD, parses in/out, returns
-(None,None)→NEEDS_REVIEW if unreadable. Live agent injects get_image + OCR; per-event only
-(26k retroactive POD read not feasible in-session).
+POD-READ WIRED (live path): `reference-implementation/pod_reader.py` —
+`read_pod_times(pro, stop_date, get_image_fn)` → `connector_get_image(mcp__dgl-mcp__get_image)`
+supplies the fetch; `decode_get_image` base64→bytes; `ocr_document` extracts text (pypdf for
+PDF text layer, pdf2image+pytesseract fallback for scans — lazy-imported; raises
+OcrUnavailable→NEEDS_REVIEW if a scan has no OCR backend); tries image type 04-Temp POD then
+01-BOL/POD; `parse_pod_times` handles Check-In/IN/Arrived formats + overnight. 40/40 tests
+(9 pod). Production runtime needs pypdf + tesseract for scanned PODs; the analysis sandbox
+lacks them (pip blocked by proxy) so only the parse/decode/orchestration were exercised
+here. Per-event only — 26k retroactive POD read not feasible in-session.
 RATE SHEET finalized in `customer-accessorial-rate-sheet.md` from realized bill÷pay ratios
 (detention 1.78x ok; layover 0.84x = LOSS, fix to $225/$375; TONU 1.11x thin -> $225/$350).
 
