@@ -72,11 +72,12 @@ Full results table in `leakage-analysis.md`; customer-level detail kept OUT of g
 DETENTION RULE (locked with PM): clock starts at APPOINTMENT (McLeod sched_arrive_early)
 + 2h when an appointment exists — even if the carrier arrived early — else arrival + 2h;
 ends at check-out; caps at layover. Engine updated (accessorial_rules.py, 21/21 tests).
-CORRECTED with stops.csv (Query E, 56,744 stops): un-billed detention = **$691k (cap per
-load) – $742k (cap per stop)** across 11,487 loads, drops >18h excluded. This is HIGHER than
-the first $503k pass because it counts BOTH pickup and delivery and uses the appointment
-clock. Still pre-eligibility (carrier-fault/no-signed-doc not removed). Per-stop vs per-load
-cap is a policy choice (Rate Con "maxes out at layover" is ambiguous).
+FINAL detention (stops.csv Query E, 56,744 stops): 2h free + $150 cap PER STOP (PM's
+choice), appointment+2h clock, drops >18h excluded, then ELIGIBILITY filter = remove stops
+where carrier arrived after its appointment (carrier-fault; 4,943 stops / $242k). Result:
+pre-eligibility $741,519 → **$530,861 un-billed** across 9,243 loads (total eligible
+entitled $670,482). Supersedes the first arrival-based $503k pass. Remaining haircut =
+per-event signed-doc proof from the POD.
 Query E join (PM-corrected): stop → orders directly on `s.order_id` (NOT via movement).
 Stop times are stop-LOCAL wall clock — within-stop durations need no tz conversion; only a
 dwell crossing a DST change is off 1h (negligible). POD IS AUTHORITATIVE for check-in/out —

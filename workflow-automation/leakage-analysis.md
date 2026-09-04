@@ -15,18 +15,19 @@ Three distinct numbers — deliberately **not** summed (realized loss ≠ opport
 | Bucket | Type | Annual |
 |--------|------|-------:|
 | Layover billed below cost | **Realized loss** | −$27,545 |
-| Un-billed detention (appointment+2h rule, both stops, 11,487 loads, drops excluded) | Opportunity, pre-eligibility | $691k–$742k |
+| Un-billed detention (appt+2h & $150 cap PER STOP, eligibility-adjusted, 9,243 loads) | Opportunity (pre signed-doc) | $530,861 |
 | Carrier accessorials paid with no rate-con recorded | Risk exposure | $435,475 |
 
-Detention was refined (2026-09-04) to the PM's rule via `stops.csv` (Query E): the clock
-starts at the **appointment + 2h** when an appointment exists (even on an early arrival),
-else arrival + 2h; ends at check-out; caps at layover (per-load cap = $691k, per-stop cap =
-$742k). This supersedes the first arrival-based dwell pass (~$503k), which used only the
-worst single stop. Two haircuts still apply and both lower it: eligibility (carrier-fault /
-no-signed-doc loads aren't owed) is not yet removed, and check-in/out must come from the
-**POD** — McLeod's entered stop times run ~25–60 min off (order 0169514: McLeod 12:15/19:15
-vs POD 11:15/18:50). The POD-read step is wired in `reference-implementation/pod_reader.py`
-for per-event billing.
+Detention (final method, 2026-09-04) via `stops.csv` (Query E): clock starts **appointment
++ 2h** (even on early arrival), else arrival + 2h; ends at check-out; **2h free and the $150
+layover cap applied PER STOP** (pickup and delivery each). Drops (>18h on-site) excluded.
+**Eligibility filter:** stops where the carrier arrived after its appointment are carrier-
+fault and removed (4,943 stops / $242k). Result: pre-eligibility $741,519 → **$530,861
+un-billed** across 9,243 loads (total eligible entitled $670,482). This supersedes the first
+arrival-based dwell pass (~$503k, single worst stop). Remaining haircut: signed-doc proof,
+verified per load from the **POD** at billing time — McLeod's entered times run ~25–60 min
+off (0169514: McLeod 12:15/19:15 vs POD 11:15/18:50); POD-read wired in
+`reference-implementation/pod_reader.py`.
 
 Realized accessorial billed vs paid, by category (hard data; fuel & linehaul excluded):
 
@@ -41,8 +42,8 @@ Realized accessorial billed vs paid, by category (hard data; fuel & linehaul exc
 | **Total** | **597,749** | **435,475** | **+162,724** |
 
 Key findings: (1) **layover runs at a loss** company-wide — fix on the customer rate sheet;
-(2) **11,487 loads owed detention but were never billed** — $691k–$742k on the
-appointment+2h rule (per-load vs per-stop cap), before the eligibility/POD haircut;
+(2) **9,243 loads owed detention but were never billed** — **$530,861** (appointment+2h &
+$150 cap per stop, carrier-late stops removed as fault), before per-event signed-doc proof;
 (3) **84.7% of loads (22,633) have no rate-confirmation date** — a control gap that both
 risks the $435k of accessorials paid and is what the accessorial engine's
 held-until-documented gate closes.

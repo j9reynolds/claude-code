@@ -110,46 +110,52 @@ def detention_from_stops(stops_p, det_billed_orders):
     for a within-stop duration; only a dwell crossing a DST change is off by 1h — negligible).
     McLeod actual times are APPROXIMATE — the POD is authoritative per load."""
     from collections import defaultdict
-    per_order_dollars = defaultdict(float)   # drop-excluded (defensible)
-    per_order_raw = defaultdict(float)        # includes long dwells (upper bound)
-    drops = 0
+    per_order_all = defaultdict(float)     # per-stop cap, drops excluded (before eligibility)
+    per_order_elig = defaultdict(float)    # + eligibility: exclude carrier-late stops
+    drops = late_excluded = 0
+    late_dollars = 0.0
     with open(stops_p, newline="", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
             arr, dep = parse_dt(r.get("actual_arrival")), parse_dt(r.get("actual_departure"))
             if not arr or not dep or dep <= arr:
                 continue
             appt = parse_dt(r.get("appointment_early"))
+            appt_late = parse_dt(r.get("appointment_late")) or appt
             ref = appt or arr
             onsite_h = (dep - arr).total_seconds() / 3600.0
             billable_h = max(0.0, min((dep - ref).total_seconds() / 3600.0 - FREE_MIN / 60.0,
                                       onsite_h))
-            if billable_h <= 0:
+            if billable_h <= 0 or onsite_h > DROP_DWELL_H:
+                if onsite_h > DROP_DWELL_H and billable_h > 0:
+                    drops += 1
                 continue
             dollars = min(billable_h * DET_RATE_HR, LAYOVER_CAP)  # cap per stop
             oid = clean(r.get("order_id"))
-            per_order_raw[oid] += dollars
-            if onsite_h > DROP_DWELL_H:
-                drops += 1
+            per_order_all[oid] += dollars
+            # ELIGIBILITY: if the carrier arrived AFTER its appointment, the delay is
+            # carrier-caused -> not owed per the Rate Confirmation. Stops with no
+            # appointment stay eligible (clock ran from arrival).
+            if appt_late is not None and arr > appt_late:
+                late_excluded += 1
+                late_dollars += dollars
             else:
-                per_order_dollars[oid] += dollars
+                per_order_elig[oid] += dollars
 
     def summarize(per_order):
-        entitled = sum(per_order.values())
         gap = {o: d for o, d in per_order.items() if o not in det_billed_orders}
-        return entitled, sum(gap.values()), len(gap)
+        return sum(per_order.values()), sum(gap.values()), len(gap)
 
-    # per-load cap = detention "maxes out at layover" read as once per load (conservative)
-    per_order_loadcap = {o: min(d, LAYOVER_CAP) for o, d in per_order_dollars.items()}
-    ent_stop, gap_stop, n_stop = summarize(per_order_dollars)      # $150 per stop
-    ent_load, gap_load, n_load = summarize(per_order_loadcap)      # $150 per load
+    ent_all, gap_all, n_all = summarize(per_order_all)     # per-stop cap, pre-eligibility
+    ent_el, gap_el, n_el = summarize(per_order_elig)       # eligibility-adjusted (FINAL)
     print("-" * 74)
-    print(" DETENTION — APPOINTMENT-BASED (from stops.csv; supersedes the dwell estimate)")
-    print(f"   Rule: clock = appointment+2h (else arrival+2h) -> checkout; drops >{DROP_DWELL_H:.0f}h excluded.")
-    print(f"   Un-billed detention (no customer detention charge on the load):")
-    print(f"      cap $150 per LOAD  (conservative): ${gap_load:,.0f}   ({n_load:,} loads)")
-    print(f"      cap $150 per STOP  (PU + DEL):     ${gap_stop:,.0f}   ({n_stop:,} loads)")
-    print("   Both use McLeod times (approximate) and DO NOT yet remove carrier-fault /")
-    print("   no-signed-doc loads or use POD times — so true recoverable is a fraction below.")
+    print(" DETENTION — APPOINTMENT-BASED, PER-STOP, ELIGIBILITY-ADJUSTED (from stops.csv)")
+    print(f"   Rule: 2h free + $150 cap PER STOP; clock = appointment+2h (else arrival+2h).")
+    print(f"   Pre-eligibility un-billed:                 ${gap_all:,.0f}   ({n_all:,} loads)")
+    print(f"   Carrier-late stops removed (fault):        {late_excluded:,} stops, ${late_dollars:,.0f}")
+    print(f"   ELIGIBILITY-ADJUSTED un-billed detention:  ${gap_el:,.0f}   ({n_el:,} loads)")
+    print(f"   Eligibility-adjusted TOTAL entitled:       ${ent_el:,.0f}")
+    print("   Still uses McLeod times (approximate); signed-doc check is per-event via the")
+    print("   POD (pod_reader.py) — some eligible detention will need that proof to bill.")
 
 
 def main(loads_p, oc_p, cp_p, cc_p, stops_p=None):
