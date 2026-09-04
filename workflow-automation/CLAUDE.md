@@ -31,15 +31,45 @@ live: the **"DGL Command Center"** (in-house TMS, AI quoting, account-health, tr
 3. **Never fabricate figures.** No invented dollar amounts (e.g. "Delta lost $X"). Real
    numbers require real data from McLeod.
 
-## HARD CONSTRAINT — this sandbox cannot reach McLeod (verified)
+## McLeod access — via the `dgl-mcp` connector (READ tools; live as of 2026-09-04)
 
-- **DB02 / LME_1720** (SQL Server): does not resolve, no route to TCP/1433. On-prem.
-- **McLeod REST API:** the session egress proxy **allowlists only wired-in connectors and
-  returns HTTP 403 for any other host** — confirmed against McLeod's public domain. So an
-  on-prem *or* public McLeod endpoint is unreachable from here, even with a token.
-- **Conclusion:** McLeod data must come via (a) someone running the extractor on the Delta
-  network and sending back `loads_365d.csv`, or (b) **adding McLeod as a first-party Claude
-  connector** (routes through the allowlisted path; also unblocks 5 of 7 opportunities).
+The PM added a first-party MCP connector **`dgl-mcp`** that reaches McLeod (LME_1720). Read
+tools available: `search_orders` (cap 50, newest by ordered_date), `get_order`
+(header + stops, real appointment + actual times, `otherchargetotal` LUMP), `get_movement`
+(carrier, `override_pay_amt`, `rate_confirmation_status`/`_sent_date`), `get_customer`,
+`get_carrier` (payee⋈drs_payee), `get_image` (BOL/POD from DocumentPower), `list_comments`,
+`resolve_identifier`. WRITE tool `create_comment` exists — **do not call without explicit
+authorization.**
+
+Connector limits (why it's not a bulk analytics source):
+- `search_orders` capped at 50 rows → cannot page the whole ~tens-of-thousands-of-loads book.
+- `get_order` returns `otherchargetotal` as a **lump** (accessorials+fuel mixed), not
+  itemized line items — customer-accessorial billing isn't separable from the connector alone.
+
+Confirmed real schema (from connector responses): `orders`(id, customer_id, status
+[D=delivered/A/V/P], on_hold, curr_movement_id, freight_charge, otherchargetotal,
+total_charge, ordered_date, bill_date, equipment_type_id); `stop`(movement_id, stop_type
+[PU/SO], sched_arrive_early/late, actual_arrival/actual_departure, timezone_id — stop-local
+wall clock, no tz marker); `movement`(id, order_id, carrier_id, override_pay_amt, target_pay,
+max_buy, rate_confirmation_status, rate_confirmation_sent_date); carrier = `payee` ⋈
+`drs_payee`.
+
+Direct SQL to DB02 and the McLeod REST API remain unreachable from the sandbox (no route;
+egress proxy 403s non-allowlisted hosts) — the connector is the only in-session path.
+
+## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT
+
+PM chose the full 365-day, all-customers figure via bulk export (not a connector sample),
+because the connector can't page the whole book. Deliverable: `mcleod-extract/
+mcleod_leakage_extract.sql` (now hardened with the connector-confirmed schema; only
+`other_charge` codes + the carrier-charge table left to confirm via its discovery block) →
+run on DB02 (fastest: the dev who built `dgl-mcp` already has the connection) → CSV →
+`leakage_model.py --csv`. Real number NOT yet computed (awaiting the CSV).
+
+Validation already seen on real order 0197341: actual pickup dwell 16h20m (detention that
+caps at $150) vs the rep's hand-typed email times; `rate_confirmation_status`/`_sent_date`
+NULL → the contract's "signed rate con returned in real time" gate isn't being recorded (a
+control-gap / leakage risk in its own right).
 
 ## Pilot status — #1 Accessorial engine (BUILT, dry-run)
 

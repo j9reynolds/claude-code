@@ -2,168 +2,132 @@
    McLeod LME — Accessorial Leakage Extract  (READ-ONLY)
    Target: server DB02, database LME_1720  (McLeod LoadMaster Enterprise, SQL Server)
 
-   Purpose: produce ONE ROW PER LOAD delivered in the trailing 365 days, with the
-   columns the leakage model consumes (reference-implementation/leakage_model.py ->
-   required_mcleod_columns()). Pull real stop in/out times, appointment windows,
-   accessorial billing/pay, and the signed Rate Confirmation return timestamp.
+   Purpose: ONE ROW PER DELIVERED LOAD in the trailing 365 days, with the columns the
+   leakage model consumes (reference-implementation/leakage_model.py). Real stop in/out
+   times, appointment windows, itemized accessorial billing, carrier pay, and the rate-con
+   state.
 
-   THIS SCRIPT ONLY SELECTS. It writes nothing. Run it against a READ replica or
-   with a read-only login.
+   READ-ONLY. Only SELECTs. Run against a read replica or a read-only login.
 
-   !! SCHEMA CAVEAT — READ THIS FIRST !!
-   McLeod LME table/column names vary by version and by site customization. The
-   names below are the standard LME schema, but you MUST confirm them against THIS
-   instance before trusting output. Run the discovery block at the bottom first, or
-   check McLeod's data dictionary. Every place that needs confirming is marked
-   -- CONFIRM.
+   SCHEMA NOTE: the core table/column names below (orders, movement, stop, payee/drs_payee)
+   were CONFIRMED against this live instance via the dgl-mcp connector. The remaining
+   -- CONFIRM markers are the itemized-charge pieces the connector does not expose
+   (other_charge codes, carrier-side charges) — settle them with the discovery block at the
+   bottom, which is a two-minute job.
    ============================================================================ */
 
-/* ---- Parameters --------------------------------------------------------- */
-DECLARE @from_date        datetime = DATEADD(day, -365, CAST(GETDATE() AS date));
-DECLARE @company_id       varchar(10) = 'TMS';   -- CONFIRM: McLeod company id
-/* Image type numbers — from the Accounting folder doc / McLeod image setup.
-   temporary POD = 4 is confirmed by the PM. CONFIRM the rest against your list. */
-DECLARE @img_signed_ratecon int = NULL;   -- CONFIRM: image type # for a SIGNED Rate Confirmation
-DECLARE @img_temp_pod       int = 4;      -- confirmed: "temporary POD" = 4
-DECLARE @img_bol_pod        int = NULL;   -- CONFIRM: image type # for BOL / final POD
+DECLARE @from_date datetime = DATEADD(day, -365, CAST(GETDATE() AS date));
 
-/* ---- Main extract ------------------------------------------------------- */
 ;WITH
-/* The billable delivery load. In LME the order id is the PRO the reps quote. */
+/* Delivered, billed loads in the window. (status 'D' = delivered; confirmed.) */
 ord AS (
-    SELECT  o.id                      AS pro_number,
-            o.company_id,
+    SELECT  o.id                AS pro_number,
             o.customer_id,
             o.curr_movement_id,
-            o.freight_charge          AS linehaul_rate,   -- CONFIRM: linehaul vs total_charge
-            o.delivered_date,                              -- CONFIRM col name (may be on movement/stop)
-            o.operational_status
-    FROM    dbo.orders o                                   -- CONFIRM table
-    WHERE   o.company_id = @company_id
-      AND   o.delivered_date >= @from_date
-      AND   o.status = 'A'                                 -- CONFIRM: active/delivered filter
+            o.freight_charge,          -- confirmed
+            o.otherchargetotal,        -- confirmed: LUMP of all other charges (see oc CTE for the split)
+            o.total_charge,            -- confirmed
+            o.bill_date,               -- confirmed
+            o.ordered_date,            -- confirmed
+            o.equipment_type_id        -- confirmed (proxy only; team-service not stored)
+    FROM    dbo.orders o
+    WHERE   o.status = 'D'                     -- confirmed: delivered
+      AND   o.bill_date >= @from_date          -- billed in the last 365 days
 ),
-/* Carrier on the current movement. */
+/* Carrier + pay + rate-con state on the current movement. (all confirmed via connector) */
 mov AS (
     SELECT  m.id AS movement_id, m.order_id,
-            m.override_carrier_id AS carrier_id,           -- CONFIRM
-            m.override_pay_amt    AS carrier_total_pay,    -- CONFIRM
-            m.brokerage_status
-    FROM    dbo.movement m                                 -- CONFIRM
+            m.carrier_id,
+            m.override_pay_amt,                 -- confirmed: total carrier pay
+            m.rate_confirmation_status,         -- confirmed (often NULL — data-quality caveat)
+            m.rate_confirmation_sent_date       -- confirmed: when rate con was sent to carrier
+    FROM    dbo.movement m
 ),
-/* Appointment window + actual in/out at each stop; we summarize the worst dwell. */
+/* Worst dwell + appointment miss across the load's stops. (stop cols confirmed) */
 stops AS (
-    SELECT  s.order_id,
-            SUM(CASE WHEN s.actual_departure IS NOT NULL AND s.actual_arrival IS NOT NULL
-                     THEN DATEDIFF(minute, s.actual_arrival, s.actual_departure) ELSE 0 END)
-                                                   AS total_dwell_minutes,
-            MAX(CASE WHEN s.actual_arrival > s.sched_arrive_late THEN 1 ELSE 0 END)
-                                                   AS any_late_arrival,   -- appointment miss
-            MIN(s.actual_arrival)                  AS first_check_in,
-            MAX(s.actual_departure)                AS last_check_out,
-            COUNT(*)                               AS stop_count
-    FROM    dbo.stop s                                     -- CONFIRM: sched_arrive_early/late, actual_arrival/departure
-    GROUP BY s.order_id
+    SELECT  s.movement_id,
+            MAX(DATEDIFF(minute, s.actual_arrival, s.actual_departure)) AS max_dwell_minutes,
+            MAX(CASE WHEN s.sched_arrive_late IS NOT NULL
+                      AND s.actual_arrival > s.sched_arrive_late THEN 1 ELSE 0 END) AS any_late_arrival,
+            MIN(s.actual_arrival)   AS first_check_in,
+            MAX(s.actual_departure) AS last_check_out,
+            SUM(CASE WHEN s.stop_type NOT IN ('PU','SO') THEN 1 ELSE 0 END) AS extra_stops  -- CONFIRM stop_type codes
+    FROM    dbo.stop s
+    WHERE   s.actual_arrival IS NOT NULL AND s.actual_departure IS NOT NULL
+    GROUP BY s.movement_id
 ),
-/* Customer-side accessorial billing (othercharge). Filter to accessorial codes. */
-cust_acc AS (
-    SELECT  oc.order_id,
-            SUM(oc.amount) AS actual_customer_accessorial_billed
-    FROM    dbo.othercharge oc                             -- CONFIRM
-    WHERE   oc.charge_id IN ('DET','LAY','TONU','STOP','LUMP')  -- CONFIRM your accessorial charge codes
-    GROUP BY oc.order_id
+/* ITEMIZED customer accessorial billing — the piece the connector could not give us.
+   McLeod line-item other charges live in dbo.other_charge. CONFIRM the table name and the
+   accessorial charge codes with the discovery block, then adjust the IN(...) list. */
+oc AS (
+    SELECT  c.order_id,
+            SUM(CASE WHEN c.charge_id IN ('DET','LAY','TONU','STOP','LUMP','DRVAST')  -- CONFIRM codes
+                     THEN c.amount ELSE 0 END)                        AS accessorial_billed,
+            SUM(CASE WHEN c.charge_id = 'LUMP' THEN c.amount ELSE 0 END) AS lumper_billed  -- CONFIRM
+    FROM    dbo.other_charge c                                        -- CONFIRM table name
+    GROUP BY c.order_id
 ),
-/* Carrier-side accessorial pay and deductions (carrier other charges). */
-carr_acc AS (
-    SELECT  occ.order_id,
-            SUM(CASE WHEN occ.amount > 0 THEN occ.amount ELSE 0 END) AS actual_carrier_accessorial_paid,
-            SUM(CASE WHEN occ.amount < 0 THEN -occ.amount ELSE 0 END) AS actual_deductions_taken
-    FROM    dbo.otherchargecarrier occ                     -- CONFIRM table name (carrier other charges)
-    WHERE   occ.charge_id IN ('DET','LAY','TONU','TRACK','POD','RATECON','CHKCALL','DIRRUN','EXCL')  -- CONFIRM
-    GROUP BY occ.order_id
-),
-/* Lumper cost actually paid (to net the customer handling markup). */
-lumper AS (
-    SELECT occ.order_id, SUM(occ.amount) AS lumper_cost
-    FROM   dbo.otherchargecarrier occ                      -- CONFIRM
-    WHERE  occ.charge_id = 'LUMP'                          -- CONFIRM
-    GROUP BY occ.order_id
-),
-/* When was the SIGNED Rate Confirmation image uploaded? (image header table) */
-ratecon_img AS (
-    SELECT  i.order_id,                                    -- CONFIRM: image links by order_id or pro_nbr
-            MIN(i.create_date) AS signed_ratecon_uploaded_at
-    FROM    dbo.imghdr i                                   -- CONFIRM: LME image header table (imghdr / img_images)
-    WHERE   i.img_type = @img_signed_ratecon               -- CONFIRM: image type column + value
-    GROUP BY i.order_id
-),
-/* When was a POD (temp or final) uploaded? Used for POD-late derivation. */
-pod_img AS (
-    SELECT  i.order_id, MIN(i.create_date) AS pod_uploaded_at
-    FROM    dbo.imghdr i                                   -- CONFIRM
-    WHERE   i.img_type IN (@img_temp_pod, @img_bol_pod)
-    GROUP BY i.order_id
+/* Carrier-side accessorial pay + deductions. In many LME builds these are other_charge
+   rows tied to the movement, or a carrier-charge table. CONFIRM against your instance. */
+cc AS (
+    SELECT  cc.movement_id,
+            SUM(CASE WHEN cc.amount > 0 THEN cc.amount ELSE 0 END)  AS carrier_accessorial_paid,   -- CONFIRM
+            SUM(CASE WHEN cc.amount < 0 THEN -cc.amount ELSE 0 END) AS deductions_taken            -- CONFIRM
+    FROM    dbo.othercharge_carrier cc                               -- CONFIRM table name (carrier other charges)
+    GROUP BY cc.movement_id
 )
 SELECT
     ord.pro_number,
-    CAST(ord.delivered_date AS date)                              AS delivered_date,
-    cu.name                                                       AS customer,          -- CONFIRM customer table/col
-    ca.name                                                       AS carrier,           -- CONFIRM carrier table/col
-    CAST(NULL AS varchar(1))                                      AS team_service,      -- UNKNOWN in McLeod -> leave null (CONFIRM if a flag exists)
-    ord.linehaul_rate,
+    CONVERT(varchar(10), ord.bill_date, 120)                     AS delivered_date,
+    c.name                                                        AS customer,        -- CONFIRM customer name col
+    p.name                                                        AS carrier,         -- payee/drs_payee (confirmed join shape)
+    CAST(NULL AS varchar(1))                                      AS team_service,    -- not stored in McLeod -> unknown
+    ord.freight_charge                                            AS linehaul_rate,
     st.first_check_in                                             AS stop_check_in,
     st.last_check_out                                             AS stop_check_out,
-    CAST(NULL AS varchar(1))                                      AS carrier_at_fault,  -- UNKNOWN -> null (model treats conservatively)
-    CAST(NULL AS varchar(1))                                      AS signed_facility_proof, -- UNKNOWN unless imaged separately
-    CASE WHEN rc.signed_ratecon_uploaded_at IS NOT NULL THEN 'Y' ELSE 'N' END AS revised_signed_ratecon,
-    CAST(NULL AS varchar(1))                                      AS customer_paid,     -- from AR paid status (CONFIRM: ar_status)
-    CAST(NULL AS varchar(1))                                      AS layover,           -- CONFIRM: derive from othercharge 'LAY'
-    CAST(NULL AS varchar(1))                                      AS tonu,              -- CONFIRM: derive from othercharge 'TONU'
-    CAST(NULL AS int)                                             AS stopoff_count,     -- derive from stop_count-2 or 'STOP' charges
-    ISNULL(lu.lumper_cost, 0)                                     AS lumper_cost,
+    CAST(NULL AS varchar(1))                                      AS carrier_at_fault,        -- judgment; unknown
+    CAST(NULL AS varchar(1))                                      AS signed_facility_proof,   -- unknown unless imaged separately
+    CASE WHEN mov.rate_confirmation_sent_date IS NOT NULL THEN 'Y' ELSE 'N' END AS revised_signed_ratecon,  -- best available
+    CASE WHEN ord.bill_date IS NOT NULL THEN 'Y' ELSE 'N' END     AS customer_paid,   -- proxy: billed. CONFIRM ar paid status if available
+    CAST(NULL AS varchar(1))                                      AS layover,         -- derive: oc has 'LAY' > 0
+    CAST(NULL AS varchar(1))                                      AS tonu,            -- derive: oc has 'TONU' > 0
+    ISNULL(st.extra_stops, 0)                                     AS stopoff_count,
+    0                                                             AS lumper_cost,     -- from carrier side if separable; else oc.lumper_billed
     CAST(NULL AS varchar(1))                                      AS driver_assist_preapproved,
-    CAST(NULL AS varchar(1))                                      AS macropoint_tracking_provided, -- from MacroPoint/P44 integration table if present
+    CAST(NULL AS varchar(1))                                      AS macropoint_tracking_provided,  -- from tracking integration table if present
     CASE WHEN st.any_late_arrival = 1 THEN 'N' ELSE 'Y' END       AS arrived_on_time,
     CAST(NULL AS varchar(1))                                      AS direct_run_violation,
     CAST(NULL AS int)                                             AS missed_check_calls_count,
-    CASE WHEN pod.pod_uploaded_at IS NULL THEN 'Y'
-         WHEN DATEDIFF(hour, st.last_check_out, pod.pod_uploaded_at) > 1 THEN 'Y'
-         ELSE 'N' END                                            AS pod_late,          -- >1h after unload per Rate Con
+    CAST(NULL AS varchar(1))                                      AS pod_late,        -- needs image upload time (imghdr) vs unload
     CAST(NULL AS int)                                             AS pod_days_late,
-    CASE WHEN rc.signed_ratecon_uploaded_at IS NOT NULL THEN 'Y' ELSE 'N' END AS signed_ratecon_returned,
+    CASE WHEN mov.rate_confirmation_sent_date IS NOT NULL THEN 'Y' ELSE 'N' END AS signed_ratecon_returned,
     CAST(NULL AS varchar(1))                                      AS exclusive_use_violation,
-    ISNULL(cca.actual_customer_accessorial_billed, 0)            AS actual_customer_accessorial_billed,
-    ISNULL(cra.actual_carrier_accessorial_paid, 0)              AS actual_carrier_accessorial_paid,
-    ISNULL(cra.actual_deductions_taken, 0)                      AS actual_deductions_taken
+    ISNULL(oc.accessorial_billed, 0)                             AS actual_customer_accessorial_billed,
+    ISNULL(cc.carrier_accessorial_paid, 0)                      AS actual_carrier_accessorial_paid,
+    ISNULL(cc.deductions_taken, 0)                              AS actual_deductions_taken
 FROM        ord
-LEFT JOIN   mov        ON mov.order_id = ord.pro_number
-LEFT JOIN   dbo.customer cu ON cu.id = ord.customer_id          -- CONFIRM
-LEFT JOIN   dbo.carrier  ca ON ca.id = mov.carrier_id           -- CONFIRM
-LEFT JOIN   stops      st  ON st.order_id  = ord.pro_number
-LEFT JOIN   cust_acc   cca ON cca.order_id = ord.pro_number
-LEFT JOIN   carr_acc   cra ON cra.order_id = ord.pro_number
-LEFT JOIN   lumper     lu  ON lu.order_id  = ord.pro_number
-LEFT JOIN   ratecon_img rc ON rc.order_id  = ord.pro_number
-LEFT JOIN   pod_img    pod ON pod.order_id = ord.pro_number
-ORDER BY    ord.delivered_date;
+LEFT JOIN   mov  ON mov.movement_id = ord.curr_movement_id
+LEFT JOIN   dbo.customer c ON c.id = ord.customer_id             -- CONFIRM customer table/col
+LEFT JOIN   dbo.payee    p ON p.id = mov.carrier_id             -- payee INNER JOIN drs_payee per connector
+LEFT JOIN   stops st ON st.movement_id = ord.curr_movement_id
+LEFT JOIN   oc      ON oc.order_id     = ord.pro_number
+LEFT JOIN   cc      ON cc.movement_id  = ord.curr_movement_id
+ORDER BY    ord.bill_date;
 
 /* ============================================================================
-   DISCOVERY BLOCK — run this FIRST to confirm the real table/column names on
-   THIS instance, then fix every -- CONFIRM above.
+   DISCOVERY BLOCK — run FIRST to settle the remaining -- CONFIRM items.
    ============================================================================ */
--- Tables that look order/stop/charge/image related:
--- SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
---  WHERE TABLE_NAME LIKE '%order%' OR TABLE_NAME LIKE '%stop%'
---     OR TABLE_NAME LIKE '%othercharge%' OR TABLE_NAME LIKE '%img%'
---     OR TABLE_NAME LIKE '%movement%' ORDER BY TABLE_NAME;
---
--- Columns on the stop table (appointment + actual in/out):
--- SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
---  WHERE TABLE_NAME = 'stop' ORDER BY ORDINAL_POSITION;
---
--- Distinct accessorial charge codes actually in use (fix the IN(...) lists):
+-- Itemized customer charge codes actually in use (fix the oc IN(...) list):
 -- SELECT charge_id, descr, COUNT(*) n, SUM(amount) total
---   FROM dbo.othercharge GROUP BY charge_id, descr ORDER BY n DESC;
+--   FROM dbo.other_charge GROUP BY charge_id, descr ORDER BY total DESC;
 --
--- Image types in use (confirm signed rate con # and BOL/POD #; temp POD = 4):
--- SELECT img_type, COUNT(*) n FROM dbo.imghdr GROUP BY img_type ORDER BY img_type;
+-- Find the carrier other-charge table (carrier accessorials / deductions):
+-- SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+--  WHERE TABLE_NAME LIKE '%other%charge%' OR TABLE_NAME LIKE '%carrier%charge%';
+--
+-- Confirm stop_type codes (PU/SO seen; is there DEL, etc.?):
+-- SELECT stop_type, COUNT(*) FROM dbo.stop GROUP BY stop_type;
+--
+-- Rate-con population rate (how often is rate_confirmation_sent_date actually set?):
+-- SELECT CASE WHEN rate_confirmation_sent_date IS NULL THEN 'null' ELSE 'set' END, COUNT(*)
+--   FROM dbo.movement GROUP BY CASE WHEN rate_confirmation_sent_date IS NULL THEN 'null' ELSE 'set' END;

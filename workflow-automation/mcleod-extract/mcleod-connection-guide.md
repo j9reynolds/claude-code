@@ -4,11 +4,35 @@ Everything needed to pull the **real** accessorial-leakage numbers from McLeod a
 them into the leakage model. Written for whoever has McLeod / DB access on the Delta
 network (IT, a DBA, or the McLeod admin).
 
+## Chosen path: whole-book bulk export (all customers, 365 days)
+
+Decided with the PM: produce the complete 365-day, all-customers leakage figure via a bulk
+export, because the `dgl-mcp` connector is per-order (50-row search cap, lump charge totals)
+and can't page the whole book. Run `mcleod_leakage_extract.sql`, send back the CSV, and
+`leakage_model.py --csv` returns the number with per-bucket / per-customer breakdowns.
+
+**Fastest route:** whoever built the `dgl-mcp` connector already has a working read
+connection to `LME_1720` — hand them this SQL; it's the same database. Otherwise any
+read-only SQL login on `DB02` works, or export the equivalent from McLeod's report writer
+(fields listed at the bottom of this section).
+
 ## The target
 
 - **Server:** `DB02`
 - **Database:** `LME_1720` (McLeod LoadMaster Enterprise, SQL Server)
 - **Access needed:** a **read-only** SQL login. The extract issues `SELECT`s only.
+- **Schema:** the core tables/columns (`orders`, `movement`, `stop`, `payee`/`drs_payee`)
+  were **confirmed against the live DB via the dgl-mcp connector**, so the SQL is close to
+  turnkey; only the itemized-charge pieces (`other_charge` codes, the carrier-charge table)
+  remain to confirm via the discovery block.
+
+### McLeod report-writer alternative (if SQL access is slow to grant)
+
+Export one row per delivered load billed in the last 365 days with: order id, customer,
+carrier, bill date, freight charge, **itemized other charges by charge code** (detention /
+layover / TONU / stopoff / lumper), each stop's scheduled-late + actual arrival/departure,
+carrier pay, carrier accessorial/deduction charges, and the rate-confirmation sent date.
+That is the same field set the SQL produces.
 
 ## Why this can't run from the Claude session (SQL *or* API)
 
