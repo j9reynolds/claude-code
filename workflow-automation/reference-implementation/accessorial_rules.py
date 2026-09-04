@@ -22,7 +22,7 @@ later behind these same gates. Run `python3 accessorial_rules.py` for a dry-run 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -112,9 +112,13 @@ class LoadFacts:
     team_service: bool = False
     linehaul_rate: float = 0.0
 
-    # Detention / dwell
+    # Detention / dwell. check_in/check_out are the POD-documented times (authoritative;
+    # McLeod's entered actual times are unreliable). appointment_time is the scheduled
+    # appointment (McLeod sched_arrive_early) — when present, the detention clock starts
+    # appointment + free time, regardless of an early arrival; else arrival + free time.
     check_in: Optional[datetime] = None
     check_out: Optional[datetime] = None
+    appointment_time: Optional[datetime] = None
 
     # Accessorial eligibility gates (Rate Confirmation section 6)
     carrier_at_fault: bool = False             # was the delay/cancellation the carrier's fault?
@@ -226,24 +230,29 @@ def evaluate(f: LoadFacts, policy: RateConfirmationPolicy) -> Assessment:
 
     # Detention (caps at the layover charge)
     if f.check_in and f.check_out:
-        raw = (f.check_out - f.check_in).total_seconds() / 3600.0
-        if raw < 0:
+        onsite = (f.check_out - f.check_in).total_seconds() / 3600.0
+        # Detention clock: appointment + free time when an appointment exists (even if the
+        # carrier arrived early); otherwise arrival + free time. Never exceeds on-site time.
+        free_ref = f.appointment_time or f.check_in
+        detention_start = free_ref + timedelta(hours=policy.detention_free_hours)
+        raw = (f.check_out - detention_start).total_seconds() / 3600.0
+        clock = "appointment" if f.appointment_time else "arrival"
+        if onsite < 0:
             items.append(LineItem(ChargeType.DETENTION, Direction.PAYABLE, 0.0,
                                   Status.NEEDS_REVIEW,
                                   "check-out precedes check-in (inconsistent times)"))
         else:
-            billable = _round_hours(max(0.0, raw - policy.detention_free_hours),
-                                    policy.detention_rounding)
+            billable = _round_hours(max(0.0, min(raw, onsite)), policy.detention_rounding)
             uncapped = round(billable * det_rate, 2)
             amount = min(uncapped, layover_cap)
             capped = amount < uncapped
-            basis = (f"{billable:.2f}h over {policy.detention_free_hours:.0f}h free x "
+            basis = (f"{billable:.2f}h past {clock}+{policy.detention_free_hours:.0f}h x "
                      f"${det_rate:.0f}/h ({svc})"
                      + (f" — CAPPED at layover ${layover_cap:.0f}" if capped else ""))
             if billable <= 0:
                 items.append(LineItem(ChargeType.DETENTION, Direction.PAYABLE, 0.0,
                                       Status.REJECTED,
-                                      f"within {policy.detention_free_hours:.0f}h free time — none owed"))
+                                      f"within {clock}+{policy.detention_free_hours:.0f}h free — none owed"))
             else:
                 gate = _accessorial_gate(f)
                 if gate is not None:

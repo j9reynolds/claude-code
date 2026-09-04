@@ -84,7 +84,53 @@ def carrier_category(text: str):
     return None  # not an accessorial (white glove, misc, etc.)
 
 
-def main(loads_p, oc_p, cp_p, cc_p):
+def parse_dt(v):
+    v = clean(v)
+    if v in ("", "NULL"):
+        return None
+    v = v.split(".")[0]
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            from datetime import datetime
+            return datetime.strptime(v, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def detention_from_stops(stops_p, det_billed_orders):
+    """APPOINTMENT-BASED detention over all stops (Query E / stops.csv):
+    clock = (appointment_early or actual_arrival) + 2h; billable = checkout - clock,
+    capped at on-site time and at the $150 layover per stop. Sums per order and reports
+    the un-billed gap. Uses McLeod actual times (approximate; POD is authoritative)."""
+    from collections import defaultdict
+    per_order = defaultdict(float)
+    with open(stops_p, newline="", encoding="utf-8-sig") as f:
+        for r in csv.DictReader(f):
+            arr, dep = parse_dt(r.get("actual_arrival")), parse_dt(r.get("actual_departure"))
+            if not arr or not dep or dep < arr:
+                continue
+            appt = parse_dt(r.get("appointment_early"))
+            ref = appt or arr
+            start = ref.timestamp() + FREE_MIN * 60
+            onsite = (dep - arr).total_seconds()
+            billable_s = max(0.0, min(dep.timestamp() - start, onsite))
+            per_order[clean(r.get("order_id"))] += billable_s / 3600.0
+    total_hours = sum(per_order.values())
+    entitled = sum(min(h * DET_RATE_HR, LAYOVER_CAP) for h in per_order.values() if h > 0)
+    gap_orders = [o for o, h in per_order.items() if h > 0 and o not in det_billed_orders]
+    gap_dollars = sum(min(per_order[o] * DET_RATE_HR, LAYOVER_CAP) for o in gap_orders)
+    print("-" * 74)
+    print(" DETENTION — APPOINTMENT-BASED (from stops.csv; supersedes the dwell estimate)")
+    print(f"   Loads with billable detention (appt+2h rule): "
+          f"{sum(1 for h in per_order.values() if h > 0):,}")
+    print(f"   Entitled detention @ ${DET_RATE_HR:.0f}/h capped ${LAYOVER_CAP:.0f}: ${entitled:,.0f}")
+    print(f"   ...on loads with NO customer detention charge:  ${gap_dollars:,.0f} "
+          f"({len(gap_orders):,} loads)")
+    print("   (McLeod actual times are approximate; POD is authoritative per load.)")
+
+
+def main(loads_p, oc_p, cp_p, cc_p, stops_p=None):
     # ---- charge codes ----
     fuel_codes = set()
     with open(cc_p, newline="", encoding="utf-8-sig") as f:
@@ -189,9 +235,14 @@ def main(loads_p, oc_p, cp_p, cc_p):
     for cust, (cnt, dollars) in sorted(by_cust.items(), key=lambda x: -x[1][1])[:10]:
         print(f"   {cust[:44]:<46} {cnt:>5} loads  ${dollars:>9,.0f}")
 
+    if stops_p:
+        detention_from_stops(stops_p, det_billed_orders)
+
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(__doc__)
+        print("\nUsage: analyze_leakage.py loads.csv othercharges.csv carrierpay.csv "
+              "chargecodes.csv [stops.csv]")
         sys.exit(1)
-    main(*sys.argv[1:5])
+    main(*sys.argv[1:])

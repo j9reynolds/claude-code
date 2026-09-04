@@ -52,6 +52,26 @@ def test_detention_team_rate_and_cap():
     assert it.amount == P.layover_team  # caps at team layover $250
 
 
+def test_detention_clock_starts_from_appointment_not_early_arrival():
+    # Real example order 0169514: arrived 11:15, appt 15:00, out 18:50.
+    # Clock = 15:00 + 2h = 17:00 -> 1h50m billable (NOT arrival-based 5h35m).
+    from accessorial_rules import RateConfirmationPolicy
+    P0 = RateConfirmationPolicy(detention_rounding="none")
+    f = LoadFacts("0169514", check_in=d(2025, 9, 12, 11, 15),
+                  check_out=d(2025, 9, 12, 18, 50), appointment_time=d(2025, 9, 12, 15, 0),
+                  has_signed_facility_proof=True, has_revised_signed_ratecon=True,
+                  customer_has_paid=True)
+    it = _first(evaluate(f, P0), ChargeType.DETENTION)
+    assert abs(it.amount - (110 / 60.0) * 35) < 0.05      # 1h50m x $35 = $64.17
+    assert "appointment" in it.basis
+    # Same load WITHOUT an appointment would clock from arrival (11:15+2h) and cap at $150.
+    f2 = LoadFacts("0169514b", check_in=d(2025, 9, 12, 11, 15),
+                   check_out=d(2025, 9, 12, 18, 50),
+                   has_signed_facility_proof=True, has_revised_signed_ratecon=True,
+                   customer_has_paid=True)
+    assert _first(evaluate(f2, P0), ChargeType.DETENTION).amount == P.layover_solo
+
+
 def test_detention_within_free_time_rejected():
     f = LoadFacts("A4", check_in=d(2026, 8, 20, 9, 0), check_out=d(2026, 8, 20, 10, 30),
                   has_signed_facility_proof=True, has_revised_signed_ratecon=True,

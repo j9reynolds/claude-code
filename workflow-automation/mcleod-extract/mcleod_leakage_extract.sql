@@ -118,6 +118,34 @@ FROM   [lme_1720].[dbo].[charge_code];
 
 
 /* ---------------------------------------------------------------------------
+   QUERY E — PER-STOP TIMES  ->  stops.csv   (needed for correct detention)
+   One row per stop with the APPOINTMENT (sched_arrive_early) and actual in/out, so
+   detention is computed appointment+2h (not arrival+2h). Detention that starts from
+   the appointment is materially smaller for early arrivals — this replaces the
+   arrival-based max_dwell approximation in the first-pass number.
+   NOTE: McLeod's actual_arrival/departure are NOT reliable for the final bill (a POD
+   spot-check on order 0169514 showed McLeod 12:15/19:15 vs POD 11:15/18:50). Use this
+   for the population estimate; the live engine reads the POD per event for the
+   defensible per-load figure.
+   --------------------------------------------------------------------------- */
+SELECT
+    o.id                 AS order_id,
+    s.stop_type,
+    s.order_sequence,
+    s.sched_arrive_early AS appointment_early,
+    s.sched_arrive_late  AS appointment_late,
+    s.actual_arrival,
+    s.actual_departure,
+    s.appt_required
+FROM        [lme_1720].[dbo].[stop] s
+JOIN        [lme_1720].[dbo].[movement] mv ON mv.id = s.movement_id
+JOIN        [lme_1720].[dbo].[orders]   o  ON o.id  = mv.order_id
+WHERE       o.status = 'D'
+  AND       o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date))
+ORDER BY    o.id, s.order_sequence;
+
+
+/* ---------------------------------------------------------------------------
    SANITY (optional) — how often is the rate con actually recorded?
    Confirms the control-gap finding (0197341 had it NULL).
    --------------------------------------------------------------------------- */

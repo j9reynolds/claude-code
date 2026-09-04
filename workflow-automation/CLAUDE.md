@@ -69,6 +69,19 @@ DONE (2026-09-04): PM ran the SQL and provided the four CSVs; analysis computed 
 Findings artifact (private): https://claude.ai/code/artifact/f06488f3-55d1-47fb-88af-2ad88944b0c0
 Full results table in `leakage-analysis.md`; customer-level detail kept OUT of git.
 
+DETENTION RULE (locked with PM): clock starts at APPOINTMENT (McLeod sched_arrive_early)
++ 2h when an appointment exists — even if the carrier arrived early — else arrival + 2h;
+ends at check-out; caps at layover. Engine updated (accessorial_rules.py, 21/21 tests).
+The earlier $503k was arrival-based and OVERSTATES (appointment clock starts later for
+early arrivals). Correct population recompute needs per-stop appointment+times → Query E
+(`stops.csv`); analyze_leakage.py has `detention_from_stops()` ready for it.
+POD IS AUTHORITATIVE for check-in/out — McLeod actual_arrival/departure are unreliable
+(order 0169514: McLeod 12:15/19:15 vs POD 11:15/18:50). Live engine reads POD (image type
+04-Temporary POD, else 01-BOL/POD) per event via `get_image`; 26k retroactive POD-read is
+not feasible in-session, so the population number uses McLeod times as an approximation.
+RATE SHEET finalized in `customer-accessorial-rate-sheet.md` from realized bill÷pay ratios
+(detention 1.78x ok; layover 0.84x = LOSS, fix to $225/$375; TONU 1.11x thin -> $225/$350).
+
 Validation already seen on real order 0197341: actual pickup dwell 16h20m (detention that
 caps at $150) vs the rep's hand-typed email times; `rate_confirmation_status`/`_sent_date`
 NULL → the contract's "signed rate con returned in real time" gate isn't being recorded (a

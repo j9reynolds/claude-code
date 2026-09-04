@@ -83,21 +83,27 @@ getting pass-through, and set the standard from data rather than the engine's de
 
 ---
 
-## Draft Standard Customer Accessorial Rate Sheet (v0 — validate against McLeod AR)
+## FINAL Standard Customer Accessorial Rate Sheet (from real 365-day data, 2026-09-04)
 
-Carrier cost basis is from the signed Rate Confirmation. "Current engine bill" is the
-Command Center default. "Recommended customer rate" applies the standard above. **All
-recommended figures are provisional pending McLeod actuals.**
+"Realized markup" is the actual `other_charge` (customer billed) ÷ `driver_extra_pay`
+(carrier paid) ratio over 26,733 delivered loads. This is what Delta *actually* did — the
+recommendation is built to fix where it's underwater or thin and formalize where it works.
 
-| Accessorial | Carrier cost (Rate Con) | Current engine bill | Recommended customer rate | Basis |
-|-------------|------------------------|--------------------:|---------------------------|-------|
-| **Detention** | $35/h solo · $50/h team, 2h free, caps at layover | $148 | **$49/h solo · $70/h team**, 1.5h free, min $75 | cost +40%, tighter free time |
-| **Layover** | $150 solo · $250 team | $318 | **$225 solo · $375 team** | cost +50% (high dispute) |
-| **TONU** | $150 solo · $250 team | $226 | **$225 solo · $350 team** | cost +40–50% |
-| **Driver assist** | pre-approved only | — | **$150 min, pre-approved, quoted per event** | negotiated, not auto |
-| **Stopoff** | (not in Rate Con; carrier-negotiated) | $95 | **cost +40%, $95 min** | matches current engine |
-| **Lumper** | receipt (third-party) | $238 *(underbilled)* | **cost + $50 handling, never below cost** | **fix the loss** |
-| **Tolls / scale** | receipt (third-party) | — | **cost + $25 handling** | pass-through + handling |
+| Accessorial | Carrier cost (Rate Con) | Realized bill÷pay | Recommended customer rate | Why |
+|-------------|------------------------|:-----------------:|---------------------------|-----|
+| **Detention** | $35/h solo · $50/h team, **2h free from appointment**, caps at layover | **1.78×** (healthy) | **$50/h solo · $70/h team**, 2h free from appointment, min $75, caps at layover | already marked up well — formalize the appointment-based clock + min charge |
+| **Layover** | $150 solo · $250 team | **0.84× — LOSS** | **$225 solo · $375 team** (cost +50%) | **the single biggest fix**: flips −$27.5k/yr to positive |
+| **TONU** | $150 solo · $250 team | **1.11× — thin** | **$225 solo · $350 team** (cost +40–50%) | margin far too thin for a no-truck event |
+| **Stop-off** | carrier-negotiated | 7.3× (strong) | **$95 min per extra stop** | already strong — keep, set a floor |
+| **Lumper** | receipt (3rd-party) | 3.1× agg (per-event downside) | **cost + $50 handling, never below cost** | protect the per-event floor even if aggregate looks fine |
+| **Driver assist** | pre-approved only | 1.18× — thin | **$150 min, pre-approved, quoted per event** | make the minimum explicit |
+| **Tolls / scale** | receipt (3rd-party) | — | **cost + $25 handling** | pass-through + handling |
+
+**Detention free-time rule (locked with PM):** the clock starts at the **appointment time
++ 2h** when an appointment exists (even if the carrier arrived early), otherwise at
+**arrival + 2h**; it ends at check-out and caps at the layover charge. Check-in/out for a
+billable detention must come from the **POD** (04-Temporary POD, else 01-BOL/POD) — McLeod's
+entered stop times are not reliable enough to bill from (verified on order 0169514).
 
 ### Notes for whoever owns pricing
 - The **team-service** distinction runs through the whole carrier sheet; carry it into the
