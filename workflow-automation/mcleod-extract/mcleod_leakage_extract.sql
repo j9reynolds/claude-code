@@ -84,25 +84,38 @@ WHERE       o.status = 'D'
 
 /* ---------------------------------------------------------------------------
    QUERY C — CARRIER-SIDE CHARGES  ->  carriercharges.csv   (optional but ideal)
-   Carrier accessorial pay + deductions. The table name varies by LME build.
+   Carrier accessorial pay + deductions on brokered loads. Confirmed table:
+   broke_drs_ex_pay (has order_id + movement_id + payee_id + deduct_code_id +
+   amount + descr). deduct_code_id distinguishes a deduction from extra pay;
+   raw rows are returned and classified on the analysis side (no code guessing).
+   NOTE: this covers BROKERED carriers. If you also want DFS asset-driver extra
+   pay, UNION the same shape from dbo.driver_extra_pay (tell me and I'll add it).
+   --------------------------------------------------------------------------- */
+SELECT
+    x.order_id,
+    x.movement_id,
+    x.payee_id,
+    x.deduct_code_id,          -- non-null => a deduction; null => extra pay
+    x.descr,
+    x.short_descr,
+    x.amount,
+    x.rate,
+    x.units,
+    x.transaction_date
+FROM        [lme_1720].[dbo].[broke_drs_ex_pay] x
+JOIN        [lme_1720].[dbo].[orders] o ON o.id = x.order_id
+WHERE       o.status = 'D'
+  AND       o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
 
-   STEP 1 — run this DISCOVERY query as-is. It lists candidate charge/pay tables
-   and their columns so the right carrier-charge table can be identified. --------- */
-SELECT TABLE_NAME, COLUMN_NAME
-FROM   [lme_1720].INFORMATION_SCHEMA.COLUMNS
-WHERE  TABLE_NAME LIKE '%charge%' OR TABLE_NAME LIKE '%pay%'
-ORDER BY TABLE_NAME, ORDINAL_POSITION;
 
-/* STEP 2 — fill the real table + column names into this template, THEN uncomment.
-   Do NOT run it with the <angle-bracket> placeholders — they are not real objects.
--- SELECT cc.<movement_key> AS movement_id, cc.<code_col> AS charge_id,
---        cc.<descr_col> AS descr, cc.<amount_col> AS amount
--- FROM   [lme_1720].[dbo].[<carrier_charge_table>] cc
--- JOIN   [lme_1720].[dbo].[movement] mv ON mv.id = cc.<movement_key>
--- JOIN   [lme_1720].[dbo].[orders]   o  ON o.id  = mv.order_id
--- WHERE  o.status = 'D'
---   AND  o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
-*/
+/* ---------------------------------------------------------------------------
+   QUERY D — CHARGE-CODE DICTIONARY  ->  chargecodes.csv   (tiny; run once)
+   Lets the analysis classify Query B/C codes precisely (accessorial vs fuel etc.)
+   instead of guessing. is_fuel_surcharge flags fuel so it isn't counted as an
+   accessorial.
+   --------------------------------------------------------------------------- */
+SELECT id AS charge_id, descr, is_fuel_surcharge, glid
+FROM   [lme_1720].[dbo].[charge_code];
 
 
 /* ---------------------------------------------------------------------------

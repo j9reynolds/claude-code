@@ -152,7 +152,15 @@ read access is the keystone — it unblocks #1, #3, #4, #5, #6.**
     the real base column is `override_payee_id` — do NOT use `mv.carrier_id` in SQL.)
   - orders → movement: `mv.id = o.curr_movement_id`. orders → customer:
     `cust.id = o.customer_id`. stops: `s.movement_id = o.curr_movement_id`.
-- The canonical, corrected Query A/B/C lives in `mcleod-extract/mcleod_leakage_extract.sql`.
+- **Confirmed charge tables (from INFORMATION_SCHEMA discovery, 2026-09-04):**
+  - Customer billing line items: `other_charge` (order_id, charge_id, descr, amount,
+    bill_type, stop_id). This is the itemized split behind orders.otherchargetotal.
+  - Carrier accessorial pay + deductions on BROKERED loads: `broke_drs_ex_pay`
+    (order_id, movement_id, payee_id, deduct_code_id [non-null = deduction], descr,
+    amount, units). DFS asset-driver extra pay is in `driver_extra_pay` (same shape).
+  - Charge-code dictionary: `charge_code` (id, descr, is_fuel_surcharge, glid) — use
+    to classify codes and exclude fuel from accessorials.
+- The canonical Query A/B/C/D lives in `mcleod-extract/mcleod_leakage_extract.sql`.
 
 ## Working conventions
 
