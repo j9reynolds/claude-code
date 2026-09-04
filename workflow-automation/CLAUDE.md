@@ -155,9 +155,10 @@ read access is the keystone — it unblocks #1, #3, #4, #5, #6.**
 - **Confirmed charge tables (from INFORMATION_SCHEMA discovery, 2026-09-04):**
   - Customer billing line items: `other_charge` (order_id, charge_id, descr, amount,
     bill_type, stop_id). This is the itemized split behind orders.otherchargetotal.
-  - Carrier accessorial pay + deductions on BROKERED loads: `broke_drs_ex_pay`
-    (order_id, movement_id, payee_id, deduct_code_id [non-null = deduction], descr,
-    amount, units). DFS asset-driver extra pay is in `driver_extra_pay` (same shape).
+  - Carrier accessorial pay + deductions: ALSO in `other_charge`, split by
+    `bill_type` (customer_id populated = customer bill side; driver_id = carrier/pay
+    side). `broke_drs_ex_pay` is EMPTY at DGL — do not use it. DFS asset-driver extra
+    pay would be in `driver_extra_pay` (same shape) if ever needed.
   - Charge-code dictionary: `charge_code` (id, descr, is_fuel_surcharge, glid) — use
     to classify codes and exclude fuel from accessorials.
 - The canonical Query A/B/C/D lives in `mcleod-extract/mcleod_leakage_extract.sql`.
