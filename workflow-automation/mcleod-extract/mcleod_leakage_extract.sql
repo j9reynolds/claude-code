@@ -65,19 +65,15 @@ ORDER BY o.bill_date;
 
 
 /* ---------------------------------------------------------------------------
-   QUERY B — ITEMIZED CHARGES (customer bill + carrier pay/deduct)  ->  othercharges.csv
-   other_charge holds BOTH sides, distinguished by bill_type (customer_id populated
-   on the bill side, driver_id on the carrier/pay side). This single query therefore
-   covers customer billing AND carrier accessorials/deductions — Query C is not needed
-   (broke_drs_ex_pay is empty at DGL). Raw rows returned; classified on the analysis side.
+   QUERY B — CUSTOMER accessorial charges  ->  othercharges.csv
+   other_charge = the CUSTOMER billing side (carrier pay is separate, Query C).
+   Every line with its real code; classified on the analysis side via Query D.
    --------------------------------------------------------------------------- */
 SELECT
     c.order_id,
     c.charge_id,                 -- accessorial/fuel/etc. code (dictionary in Query D)
     c.descr,
-    c.bill_type,                 -- direction: customer bill vs carrier pay/deduct
-    c.customer_id,               -- populated on the customer-billed side
-    c.driver_id,                 -- populated on the carrier/driver-pay side
+    c.bill_type,                 -- keep to filter out any non-billed lines
     c.amount,
     c.rate,
     c.units,
@@ -89,11 +85,26 @@ WHERE       o.status = 'D'
 
 
 /* ---------------------------------------------------------------------------
-   QUERY C — NOT NEEDED. broke_drs_ex_pay is empty at DGL; carrier accessorials
-   and deductions live in other_charge (Query B), split by bill_type. If asset
-   (DFS company-driver) extra pay is ever needed, dbo.driver_extra_pay has the
-   same shape (order_id, movement_id, payee_id, deduct_code_id, amount) — ask.
+   QUERY C — CARRIER accessorial pay  ->  carrierpay.csv
+   Confirmed table: driver_extra_pay (this is where carrier accessorial pay lives;
+   broke_drs_ex_pay is empty at DGL). No charge_id column here — classify by descr
+   and deduct_code_id (non-null => a deduction; null => extra pay).
    --------------------------------------------------------------------------- */
+SELECT
+    x.order_id,
+    x.movement_id,
+    x.payee_id,
+    x.deduct_code_id,          -- non-null => a deduction; null => extra pay
+    x.descr,
+    x.short_desc,
+    x.amount,
+    x.rate,
+    x.units,
+    x.transaction_date
+FROM        [lme_1720].[dbo].[driver_extra_pay] x
+JOIN        [lme_1720].[dbo].[orders] o ON o.id = x.order_id
+WHERE       o.status = 'D'
+  AND       o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
 
 
 /* ---------------------------------------------------------------------------
