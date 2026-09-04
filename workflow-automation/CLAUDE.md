@@ -141,6 +141,19 @@ read access is the keystone — it unblocks #1, #3, #4, #5, #6.**
 4. **Go/no-go on the staff announcement** (`employee-announcement.md`) before anything live.
 5. After #1: start quick wins #5/#6 and enabler #7.
 
+## SQL conventions for McLeod (LME_1720) — ALWAYS follow
+
+- **Fully-qualify every table** as `[lme_1720].[dbo].[<table>]` in every query (SSMS
+  sessions are not defaulted to the lme_1720 DB context, so bare `dbo.orders` fails).
+  Bracket each identifier. This applies to all McLeod SQL going forward, no exceptions.
+- **Confirmed schema corrections (use these, not the connector's aliased names):**
+  - The carrier on a movement is `movement.override_payee_id` → join `[lme_1720].[dbo].[payee]`
+    on `payee.id = mv.override_payee_id`. (The connector surfaces this as `carrier_id`, but
+    the real base column is `override_payee_id` — do NOT use `mv.carrier_id` in SQL.)
+  - orders → movement: `mv.id = o.curr_movement_id`. orders → customer:
+    `cust.id = o.customer_id`. stops: `s.movement_id = o.curr_movement_id`.
+- The canonical, corrected Query A/B/C lives in `mcleod-extract/mcleod_leakage_extract.sql`.
+
 ## Working conventions
 
 - Commit attribution currently: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`

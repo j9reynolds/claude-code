@@ -29,7 +29,7 @@ SELECT
     o.customer_id,
     cust.name                                    AS customer,
     o.curr_movement_id,
-    mv.carrier_id,
+    mv.override_payee_id,
     pay.name                                     AS carrier,
     o.freight_charge                             AS linehaul_rate,
     o.otherchargetotal,                          -- lump; the split is in Query B
@@ -46,7 +46,7 @@ SELECT
 FROM        [lme_1720].[dbo].[orders]   o
 LEFT JOIN   [lme_1720].[dbo].[movement] mv   ON mv.id   = o.curr_movement_id
 LEFT JOIN   [lme_1720].[dbo].[customer] cust ON cust.id = o.customer_id
-LEFT JOIN   [lme_1720].[dbo].[payee]    pay  ON pay.id  = mv.carrier_id
+LEFT JOIN   [lme_1720].[dbo].[payee]    pay  ON pay.id  = mv.override_payee_id
 OUTER APPLY (
     SELECT  MIN(s.actual_arrival)   AS first_check_in,
             MAX(s.actual_departure) AS last_check_out,
