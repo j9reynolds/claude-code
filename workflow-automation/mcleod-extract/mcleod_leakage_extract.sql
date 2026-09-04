@@ -84,21 +84,25 @@ WHERE       o.status = 'D'
 
 /* ---------------------------------------------------------------------------
    QUERY C — CARRIER-SIDE CHARGES  ->  carriercharges.csv   (optional but ideal)
-   Carrier accessorial pay + deductions. The table name varies by LME build, so
-   FIND IT FIRST with the discovery snippet, then fill it into the template.
-   --------------------------------------------------------------------------- */
--- DISCOVERY: find the carrier other-charge table --
--- SELECT TABLE_NAME FROM [lme_1720].INFORMATION_SCHEMA.TABLES
---  WHERE TABLE_NAME LIKE '%other%charge%' OR TABLE_NAME LIKE '%carrier%charge%'
---     OR TABLE_NAME LIKE '%pay%detail%';
---
--- TEMPLATE (swap <carrier_charge_table> + its order/movement key + code/amount cols):
--- SELECT cc.movement_id, cc.charge_id, cc.descr, cc.amount
+   Carrier accessorial pay + deductions. The table name varies by LME build.
+
+   STEP 1 — run this DISCOVERY query as-is. It lists candidate charge/pay tables
+   and their columns so the right carrier-charge table can be identified. --------- */
+SELECT TABLE_NAME, COLUMN_NAME
+FROM   [lme_1720].INFORMATION_SCHEMA.COLUMNS
+WHERE  TABLE_NAME LIKE '%charge%' OR TABLE_NAME LIKE '%pay%'
+ORDER BY TABLE_NAME, ORDINAL_POSITION;
+
+/* STEP 2 — fill the real table + column names into this template, THEN uncomment.
+   Do NOT run it with the <angle-bracket> placeholders — they are not real objects.
+-- SELECT cc.<movement_key> AS movement_id, cc.<code_col> AS charge_id,
+--        cc.<descr_col> AS descr, cc.<amount_col> AS amount
 -- FROM   [lme_1720].[dbo].[<carrier_charge_table>] cc
--- JOIN   [lme_1720].[dbo].[movement] mv ON mv.id = cc.movement_id
+-- JOIN   [lme_1720].[dbo].[movement] mv ON mv.id = cc.<movement_key>
 -- JOIN   [lme_1720].[dbo].[orders]   o  ON o.id  = mv.order_id
 -- WHERE  o.status = 'D'
 --   AND  o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
+*/
 
 
 /* ---------------------------------------------------------------------------
