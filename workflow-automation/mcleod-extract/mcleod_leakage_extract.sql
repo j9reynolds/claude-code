@@ -1,8 +1,10 @@
 /* ============================================================================
    McLeod LME — Accessorial Leakage Extract  (READ-ONLY)
-   Target: server DB02, database LME_1720  (McLeod LoadMaster Enterprise, SQL Server)
+   Target: server DB02, database lme_1720  (McLeod LoadMaster Enterprise, SQL Server)
 
    Run READ-ONLY (SELECT only). Delivered, billed loads in the trailing 365 days.
+   Tables are fully qualified as [lme_1720].[dbo].[...] so it runs from any DB context
+   in SSMS without USE lme_1720. (Or run `USE [lme_1720];` once and drop the prefixes.)
 
    Design: TWO result sets, both runnable as-is. Nobody has to guess an accessorial
    code list — QUERY B returns every itemized charge with its real code, and the
@@ -41,10 +43,10 @@ SELECT
     st.max_dwell_minutes,                        -- worst single-stop dwell -> detention basis
     st.any_late_arrival,                         -- 1 = missed an appointment window
     st.stop_count
-FROM        dbo.orders   o
-LEFT JOIN   dbo.movement mv   ON mv.id   = o.curr_movement_id
-LEFT JOIN   dbo.customer cust ON cust.id = o.customer_id
-LEFT JOIN   dbo.payee    pay  ON pay.id  = mv.carrier_id
+FROM        [lme_1720].[dbo].[orders]   o
+LEFT JOIN   [lme_1720].[dbo].[movement] mv   ON mv.id   = o.curr_movement_id
+LEFT JOIN   [lme_1720].[dbo].[customer] cust ON cust.id = o.customer_id
+LEFT JOIN   [lme_1720].[dbo].[payee]    pay  ON pay.id  = mv.carrier_id
 OUTER APPLY (
     SELECT  MIN(s.actual_arrival)   AS first_check_in,
             MAX(s.actual_departure) AS last_check_out,
@@ -52,7 +54,7 @@ OUTER APPLY (
             MAX(CASE WHEN s.sched_arrive_late IS NOT NULL
                       AND s.actual_arrival > s.sched_arrive_late THEN 1 ELSE 0 END) AS any_late_arrival,
             COUNT(*) AS stop_count
-    FROM    dbo.stop s
+    FROM    [lme_1720].[dbo].[stop] s
     WHERE   s.movement_id = o.curr_movement_id
       AND   s.actual_arrival IS NOT NULL
       AND   s.actual_departure IS NOT NULL
@@ -74,8 +76,8 @@ SELECT
     c.amount,
     c.rate,
     c.units
-FROM        dbo.other_charge c
-JOIN        dbo.orders o ON o.id = c.order_id
+FROM        [lme_1720].[dbo].[other_charge] c
+JOIN        [lme_1720].[dbo].[orders] o ON o.id = c.order_id
 WHERE       o.status = 'D'
   AND       o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
 
@@ -86,15 +88,15 @@ WHERE       o.status = 'D'
    FIND IT FIRST with the discovery snippet, then fill it into the template.
    --------------------------------------------------------------------------- */
 -- DISCOVERY: find the carrier other-charge table --
--- SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+-- SELECT TABLE_NAME FROM [lme_1720].INFORMATION_SCHEMA.TABLES
 --  WHERE TABLE_NAME LIKE '%other%charge%' OR TABLE_NAME LIKE '%carrier%charge%'
 --     OR TABLE_NAME LIKE '%pay%detail%';
 --
 -- TEMPLATE (swap <carrier_charge_table> + its order/movement key + code/amount cols):
 -- SELECT cc.movement_id, cc.charge_id, cc.descr, cc.amount
--- FROM   dbo.<carrier_charge_table> cc
--- JOIN   dbo.movement mv ON mv.id = cc.movement_id
--- JOIN   dbo.orders   o  ON o.id  = mv.order_id
+-- FROM   [lme_1720].[dbo].[<carrier_charge_table>] cc
+-- JOIN   [lme_1720].[dbo].[movement] mv ON mv.id = cc.movement_id
+-- JOIN   [lme_1720].[dbo].[orders]   o  ON o.id  = mv.order_id
 -- WHERE  o.status = 'D'
 --   AND  o.bill_date >= DATEADD(day, -365, CAST(GETDATE() AS date));
 
@@ -104,4 +106,5 @@ WHERE       o.status = 'D'
    Confirms the control-gap finding (0197341 had it NULL).
    --------------------------------------------------------------------------- */
 -- SELECT CASE WHEN rate_confirmation_sent_date IS NULL THEN 'null' ELSE 'set' END AS rc,
---        COUNT(*) FROM dbo.movement GROUP BY CASE WHEN rate_confirmation_sent_date IS NULL THEN 'null' ELSE 'set' END;
+--        COUNT(*) FROM [lme_1720].[dbo].[movement]
+--  GROUP BY CASE WHEN rate_confirmation_sent_date IS NULL THEN 'null' ELSE 'set' END;
