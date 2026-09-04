@@ -59,12 +59,15 @@ egress proxy 403s non-allowlisted hosts) — the connector is the only in-sessio
 
 ## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT
 
-PM chose the full 365-day, all-customers figure via bulk export (not a connector sample),
-because the connector can't page the whole book. Deliverable: `mcleod-extract/
-mcleod_leakage_extract.sql` (now hardened with the connector-confirmed schema; only
-`other_charge` codes + the carrier-charge table left to confirm via its discovery block) →
-run on DB02 (fastest: the dev who built `dgl-mcp` already has the connection) → CSV →
-`leakage_model.py --csv`. Real number NOT yet computed (awaiting the CSV).
+DONE (2026-09-04): PM ran the SQL and provided the four CSVs; analysis computed via
+`mcleod-extract/analyze_leakage.py` over 26,733 delivered loads. RESULTS (365 days):
+- Layover billed BELOW cost = realized loss −$27,545/yr (fix on customer rate sheet).
+- Un-billed detention: 8,574 of 9,863 long-dwell loads carry no detention charge →
+  ≤ $503k indicative upper bound (~$125k–$200k realistic at 25–40% capture).
+- Rate-con NOT recorded on 84.7% (22,633) of loads → risk on $435k carrier accessorials paid.
+- Realized accessorial margin overall +$162.7k (billed $597.7k vs paid $435.5k).
+Findings artifact (private): https://claude.ai/code/artifact/f06488f3-55d1-47fb-88af-2ad88944b0c0
+Full results table in `leakage-analysis.md`; customer-level detail kept OUT of git.
 
 Validation already seen on real order 0197341: actual pickup dwell 16h20m (detention that
 caps at $150) vs the rep's hand-typed email times; `rate_confirmation_status`/`_sent_date`

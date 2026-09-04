@@ -4,10 +4,48 @@
 Rate Confirmation items weren't billed to the customer and/or weren't paid/deducted
 to/from the carrier?
 
-## Straight answer on the number
+## RESULTS — real data (McLeod pull, 2026-09-04)
 
-**I cannot give you the real dollar figure yet, and I will not invent one.** The two inputs
-this calculation requires both live in **McLeod**, which is not connected to this session:
+Computed from the real 365-day export via the `dgl-mcp` connection (26,733 delivered loads,
+`other_charge` + `driver_extra_pay` + `charge_code` + stop dwell; see `analyze_leakage.py`).
+Customer-level detail is in the private findings artifact, not committed here.
+
+Three distinct numbers — deliberately **not** summed (realized loss ≠ opportunity ≠ risk):
+
+| Bucket | Type | Annual |
+|--------|------|-------:|
+| Layover billed below cost | **Realized loss** | −$27,545 |
+| Un-billed detention (8,574 of 9,863 long-dwell loads carry no detention charge) | Opportunity (indicative upper bound) | ≤ $503,115 |
+| Carrier accessorials paid with no rate-con recorded | Risk exposure | $435,475 |
+
+Realized accessorial billed vs paid, by category (hard data; fuel & linehaul excluded):
+
+| Category | Cust billed | Carrier paid | Margin |
+|----------|-----------:|-------------:|-------:|
+| Detention | 226,274 | 127,439 | +98,835 |
+| Layover | 147,895 | 175,740 | **−27,545** |
+| TONU | 127,605 | 115,425 | +12,180 |
+| Stop-off | 82,695 | 11,300 | +71,395 |
+| Lumper | 9,625 | 3,102 | +6,524 |
+| Driver assist | 2,925 | 2,470 | +455 |
+| **Total** | **597,749** | **435,475** | **+162,724** |
+
+Key findings: (1) **layover runs at a loss** company-wide — fix on the customer rate sheet;
+(2) **87% of long-dwell loads bill no detention** — up to ~$503k indicative, realistically
+$125k–$200k at a 25–40% capture rate (true detention needs per-stop times, same tables);
+(3) **84.7% of loads (22,633) have no rate-confirmation date** — a control gap that both
+risks the $435k of accessorials paid and is what the accessorial engine's
+held-until-documented gate closes.
+
+The indicative detention figure is an **upper bound**: worst-stop dwell includes legitimate
+load/unload time and carrier-fault/signed-doc eligibility is unknown from this pull.
+
+---
+
+## (historical) Before the connector: why the figure needed McLeod
+
+**I could not give the real dollar figure without McLeod data, and did not invent one.** The
+two inputs this calculation requires both live in **McLeod**:
 
 1. **What you actually billed customers** for accessorials over 365 days (AR revenue by
    accessorial code).
