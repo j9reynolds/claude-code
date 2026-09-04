@@ -93,6 +93,13 @@ lacks them (pip blocked by proxy) so only the parse/decode/orchestration were ex
 here. Per-event only — 26k retroactive POD read not feasible in-session.
 RATE SHEET finalized in `customer-accessorial-rate-sheet.md` from realized bill÷pay ratios
 (detention 1.78x ok; layover 0.84x = LOSS, fix to $225/$375; TONU 1.11x thin -> $225/$350).
+DETENTION FINAL (per-stop cap + eligibility filter): un-billed = $530,861 (9,243 loads)
+after removing carrier-late stops ($242k, 4,943 stops) from the $741,519 pre-eligibility
+per-stop figure. Signed-doc check remains per-event via POD.
+DEPLOYMENT SPEC written: `deployment-spec.md` — architecture, runtime (Tesseract+Poppler+
+pyodbc), McLeod read/write scopes, shadow→assisted→auto rollout, guardrails, go-live
+checklist. Open blockers: McLeod write scopes + test company, role map, DB backups, host on
+Delta network with DB02 access + OCR binaries.
 
 Validation already seen on real order 0197341: actual pickup dwell 16h20m (detention that
 caps at $150) vs the rep's hand-typed email times; `rate_confirmation_status`/`_sent_date`
