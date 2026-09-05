@@ -1,0 +1,138 @@
+{
+  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Values written as ${VAR} are read from the environment at run time \u2014 keep real addresses and every secret in environment variables, never in this file.",
+  "defaults": {
+    "poll_window_minutes": 15,
+    "max_events_per_cycle": 25,
+    "autonomy": "draft"
+  },
+  "sources": [
+    {
+      "id": "ops-mailbox",
+      "kind": "email",
+      "enabled": true,
+      "adapter": "imap",
+      "_adapter_options": "imap | microsoft365 | gmail \u2014 use imap when connecting with an app password; use microsoft365/gmail to ride an already-connected MCP connector instead",
+      "mailbox": "${OPS_MAILBOX}",
+      "folders": [
+        "INBOX"
+      ],
+      "imap": {
+        "_comment": "Used when adapter is 'imap'. Credentials come from the environment; nothing secret belongs in this file.",
+        "host": "outlook.office365.com",
+        "port": 993,
+        "tls": true,
+        "username_env": "OPS_MAILBOX",
+        "password_env": "OPS_MAIL_APP_PASSWORD"
+      },
+      "ignore": {
+        "from_domains": [
+          "bounces.example.com"
+        ],
+        "subject_patterns": [
+          "^Out of Office",
+          "^Automatic reply",
+          "^Undeliverable"
+        ],
+        "from_addresses": [
+          "PowerAutomateNoReply@microsoft.com"
+        ]
+      },
+      "attachment_handling": {
+        "read_types": [
+          "pdf",
+          "png",
+          "jpg",
+          "tif",
+          "csv",
+          "xlsx"
+        ],
+        "max_size_mb": 20
+      }
+    },
+    {
+      "id": "mcleod-tms",
+      "kind": "tms",
+      "enabled": true,
+      "adapter": "rest",
+      "_adapter_options": "rest | connector | sql | file_drop \u2014 rest calls the McLeod web services API directly, connector reads McLeod through an MCP connector this session already has, sql reads a reporting replica, file_drop watches an EDI/export directory",
+      "rest": {
+        "base_url": "https://MCLEOD_HOST/ws/api",
+        "_auth_comment": "Confirm the scheme AND the endpoint paths against your own McLeod API documentation, or by calling the endpoint once and reading its WWW-Authenticate header (Import-OpsCredential.ps1 -TestHttp does this). These are placeholders, not verified defaults, and they differ across McLeod products and releases.",
+        "auth": {
+          "scheme": "basic",
+          "_scheme_options": "basic | header \u2014 'basic' sends username/password as HTTP Basic; 'header' sends the literal headers below",
+          "username_env": "MCLEOD_API_USER",
+          "password_env": "MCLEOD_API_PASSWORD",
+          "headers": {
+            "_comment": "Used only when scheme is 'header'.",
+            "Authorization": "Token ${MCLEOD_API_TOKEN}",
+            "X-com.mcleodsoftware.CompanyID": "${MCLEOD_COMPANY_ID}"
+          }
+        },
+        "queries": [],
+        "_queries_comment": "Intentionally empty. Fill in from your McLeod API documentation \u2014 each entry needs id, path, params (use ${CURSOR} for the high-water mark), cursor_field and id_field. The watcher reports a failed query rather than probing for a working path."
+      },
+      "connector": {
+        "_comment": "Used when adapter is 'connector'. Reads McLeod through an MCP connector rather than a direct API or database \u2014 the connector owns the credential, so nothing secret is needed here. Server and tool names differ per deployment: fill them in from your own connector's tool list rather than assuming these.",
+        "server": "${MCLEOD_MCP_SERVER}",
+        "read_tools": {
+          "search_orders": "list orders matching a filter \u2014 the cycle's entry point",
+          "get_order": "one order: header plus stops, scheduled and actual times",
+          "get_movement": "one movement: carrier, pay, rate confirmation status",
+          "get_customer": "one customer record",
+          "get_carrier": "one carrier record",
+          "list_comments": "comment history on an order"
+        },
+        "never_call": [
+          "create_comment"
+        ],
+        "_never_call_comment": "Write tools the connector exposes. The watcher is read-only and must never call these. A handler may only at 'act' autonomy, and never past its own prohibitions.",
+        "queries": [
+          {
+            "id": "orders-changed",
+            "tool": "search_orders",
+            "params": {
+              "changed_since": "${CURSOR}"
+            },
+            "cursor_field": "ordered_date",
+            "id_field": "id",
+            "page_limit": 50
+          }
+        ],
+        "_page_limit_comment": "Rows a single call can return. A connector that caps results and orders them newest-first cannot be paged backwards, so a full page is not a complete read \u2014 the watcher reports a coverage gap rather than advancing the cursor over what it never saw."
+      },
+      "sql": {
+        "_comment": "Used only when adapter is 'sql'. Read-only credentials against a reporting replica.",
+        "dsn_env": "MCLEOD_READONLY_DSN",
+        "queries": [
+          {
+            "id": "orders-changed",
+            "sql": "SELECT id, status, changed_date FROM orders WHERE changed_date > ? ORDER BY changed_date",
+            "cursor_field": "changed_date",
+            "id_field": "id"
+          }
+        ]
+      },
+      "file_drop": {
+        "_comment": "Used only when adapter is 'file_drop'. Directory McLeod exports EDI/CSV into.",
+        "watch_dir": "/PATH/TO/MCLEOD/EXPORT",
+        "patterns": [
+          "*.edi",
+          "*.csv"
+        ]
+      }
+    }
+  ],
+  "escalation": {
+    "_comment": "Where the watcher reports things it will not handle on its own.",
+    "channel": "report-to-user",
+    "_channel_options": "report-to-user | slack | email",
+    "slack_channel": "#freight-ops-alerts",
+    "always_escalate": [
+      "money-amount-change",
+      "claim-or-cargo-damage",
+      "customer-escalation-language",
+      "unrecognized-workflow"
+    ]
+  }
+}
