@@ -87,8 +87,14 @@ Two things that will bite you if nobody says them out loud:
 | `adapter` | Reads from | Use when |
 |---|---|---|
 | `rest` | McLeod web services API | You have API credentials provisioned |
+| `connector` | An already-connected MCP connector | Someone has stood one up against your McLeod instance |
 | `sql` | A read-only reporting replica | You have DB access but not API access |
 | `file_drop` | An EDI/CSV export directory | Integration happens over file exchange |
+
+`connector` is usually the shortest path to a working McLeod source, because the connector already holds the credential — you configure tool names, not secrets. Two things it needs from you:
+
+- **List the read tools explicitly.** The watcher calls only what `read_tools` names and refuses anything in `never_call`. A connector that reaches a TMS generally exposes writes beside its reads, and the watcher is read-only.
+- **Set `page_limit` to what a single call actually returns.** Connectors commonly cap results and order them newest-first, which cannot be paged backwards. The watcher treats a full page as an incomplete read and reports a coverage gap rather than advancing the cursor over events it never saw — a silent advance drops the oldest ones, which are exactly the ones that have been waiting longest.
 
 Credentials for `rest` come from the environment too — `auth.scheme` picks how they are sent:
 
