@@ -41,10 +41,23 @@ tools available: `search_orders` (cap 50, newest by ordered_date), `get_order`
 `resolve_identifier`. WRITE tool `create_comment` exists — **do not call without explicit
 authorization.**
 
-Connector limits (why it's not a bulk analytics source):
+Connector limits (why it's not a bulk analytics source) — **being lifted, not yet deployed**:
 - `search_orders` capped at 50 rows → cannot page the whole ~tens-of-thousands-of-loads book.
 - `get_order` returns `otherchargetotal` as a **lump** (accessorials+fuel mixed), not
   itemized line items — customer-accessorial billing isn't separable from the connector alone.
+
+**Open PR: `j9reynolds/DGL_McLeod_MCP#3`** (draft, branch
+`claude/dgl-mcp-query-tool-row-cap-wvs0sw`) removes both limits:
+- Row caps become parameters clamped to a deployed maximum (`Mcp:MaxRows` default 1000);
+  `search_orders` pages with `limit`/`offset` and reports `has_more`/`next_offset`.
+- New `mcleod_query` tool runs an arbitrary read-only SELECT — aggregates, joins, whole-book
+  scans, and the `other_charge` breakdown the lump `otherchargetotal` hides. Read-only rests on
+  `db_datareader` + `ApplicationIntent=ReadOnly` + a free-form guard; every call is audit-logged
+  to a new `read_audit` table.
+- Tested against a fake reader only (78 tests) — **not yet smoke-tested against db02, not yet
+  deployed** via `tools\update-mcp.ps1`. Until it is, the bulk-export path below is still the
+  live plan; once it is, the 365-day leakage extract can run through `mcleod_query` instead of
+  needing a dev to run SQL on-network.
 
 Confirmed real schema (from connector responses): `orders`(id, customer_id, status
 [D=delivered/A/V/P], on_hold, curr_movement_id, freight_charge, otherchargetotal,
