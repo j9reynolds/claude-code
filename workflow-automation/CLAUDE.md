@@ -107,18 +107,28 @@ macro `.xlsb` template titled "J.B. Hunt Transport GEGW Performance Overview", N
 customer-facing narrative. File: `0029H Self Report - Delta Group Logistics - <Month>.xlsb`
 (SharePoint `…/USPS/` + K.Cash OneDrive). Emailed by J.Reynolds → K.Cash, CC S.Ivankovic &
 P.Drzewiecki, ~1st of month for prior month. Columns: Lane | Load Count | OTP | OT Dispatch |
-OTD | Comments; each metric = On Time / Total / %; rows per lane (e.g. "Philadelphia, PA -
-Phoenix, AZ (89)") + TOTAL.
-Generator `report_usps_self_report.py` (10/10 tests) + `report_usps_self_report.sql` reproduce
-it from DGLIQ. Metric defs (CONFIRM): OTP = PU ActualArrival<=sched; OT Dispatch = PU
-ActualDeparture<=sched; OTD = SO ActualArrival<=sched; sched = COALESCE(OrigSchedLate,
-SchedArriveLate) (original tender commitment wins); "measurable total" excludes loads missing
-either timestamp. OPEN CONFIRMS: USPS McLeod customer code (assumed UNITMETN; may be a J.B.Hunt
-code), the "(89)" lane-number source (mapped pu.RefNumber), OT-Dispatch cutoff if distinct.
+OTD | Comments; each metric a single % ; rows per lane ("CITY, ST | CITY, ST") + TOTAL.
+SOURCE (confirmed by reading a real filed report, May 2026 opened as .xlsx): the report is
+built from the **J.B. Hunt data extract**, NOT McLeod. Workbook has 3 tabs — "Overview
+Summary By Lane" (the body), "Overview Summary by Trip", and "<Program> Raw Data With Reason
+Codes" (JBH extract: Contract 0029H, SV Trip ID, Load ID, O/D PAIR, JBH sched/planned vs
+actual times → flags ON TIME Arrival Y/N, Dispatch on time Y/N, ON TIME DELIVERY y/n, or
+"Order is VOID", + reason codes). Overview just aggregates the flags per lane.
+EXACT METHOD (generator matches workbook COUNTIF/COUNTIFS): Load Count = all rows incl VOID;
+OTP%/Dispatch%/OTD% = count(flag=="Y")/Load Count as ONE rounded % (report shows "89%", not
+counts) — a VOID row is in the denominator, never a Y, so it lowers the lane %; TOTAL row % =
+UNWEIGHTED mean of per-lane %s (not load-weighted). Lane label "CITY, ST | CITY, ST" uppercase,
+sorted A-Z. `report_usps_self_report.py` (10/10 tests) consumes the raw extract (CSV) and
+**reproduced the real May 2026 Overview EXACTLY — 27/27 lanes, 0 differences.**
+`report_usps_self_report.sql` is now an OPTIONAL McLeod cross-check (map JBH Load ID→McLeod
+order, compare Delta's times to JBH's), NOT the report source. My earlier McLeod-timestamp
+approach was the WRONG source/method and would have produced different numbers.
 .xlsb READ LIMIT: Graph read_resource CANNOT open .xlsb — VALIDATION_ERROR unsupported_mime
 'application/vnd.ms-excel.sheet.binary.macroenabled.12' (allow-list has .xls/.xlsx only).
-Structure recovered from the SharePoint search index; to read exact cells, re-save once as
-.xlsx. Also BUILT a reusable generic monthly customer-performance report
+Re-save as .xlsx to read cells (that's how May was read). OneDrive read path works: get_me →
+drive:///users/me → file:///{driveId}/{itemId}; big reads spill to a tool-results txt.
+OPEN: automate where the monthly JBH raw extract comes from (portal/email/EDI); program label
+per book (sample was RTH; USPS/JBH GEGW book = GEGW). Also BUILT a reusable generic monthly customer-performance report
 (`report_customer_monthly.py` + `.sql`, DGLIQ DGL_TMS.tms) — keep, it's a different artifact.
 GATED: email/attach delivery needs Microsoft 365 re-auth (disconnected). Account-health report
 is already in flight internally (Command Center PR #12) — reuse, don't duplicate.

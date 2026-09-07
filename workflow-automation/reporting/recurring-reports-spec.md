@@ -11,8 +11,10 @@ only, no money movement; the only outbound action is an email/attachment the sen
   (`report_usps_self_report.sql`). Reproduces the `.xlsb` template titled
   **"J.B. Hunt Transport GEGW Performance Overview"** exactly:
   **Lane | Load Count | OTP | OT Dispatch | OTD | Comments**, one row per lane + a TOTAL,
-  each metric as On-Time / measurable-Total / %. This is an **internal/partner report to
-  J.B. Hunt** (tender **0029H**), not a customer-facing narrative.
+  each metric a single **%**. Built from the **J.B. Hunt raw-data extract** (see below), not
+  McLeod. **Verified to reproduce a real filed report (May 2026) exactly — 27/27 lanes, 0
+  differences.** This is an **internal/partner report to J.B. Hunt** (tender **0029H**), not
+  a customer-facing narrative.
 - **BUILT — generic monthly customer performance report.** Generator
   (`report_customer_monthly.py`) + query (`report_customer_monthly.sql`). Reusable for any
   customer that wants a volume/revenue/margin/on-time/accessorials summary. Keep it — it is
@@ -31,31 +33,45 @@ only, no money movement; the only outbound action is an email/attachment the sen
 | Tender | 0029H |
 | Audience | **Internal → J.B. Hunt.** Emailed by J.Reynolds to K.Cash, CC S.Ivankovic & P.Drzewiecki, ~1st of the month for the prior month |
 | Home | SharePoint `…/USPS/` (and a working copy in K.Cash's OneDrive) |
-| Columns | Lane · Load Count · **OTP** (On-Time Pickup) · **OT Dispatch** (On-Time Dispatch) · **OTD** (On-Time Delivery) · Comments |
-| Sub-columns | Each of OTP / OT Dispatch / OTD is On Time · Total · % |
-| Rows | One per lane, e.g. `Philadelphia, PA - Phoenix, AZ (89)`; plus a TOTAL |
+| Columns | Lane · Load Count · **OTP** (On-Time Pickup/Arrival) · **OT Dispatch** · **OTD** (On-Time Delivery) · Comments |
+| Metric cell | A single rounded **percentage** (e.g. `89%`) — %Y over the lane's loads |
+| Lane format | `CITY, ST \| CITY, ST` (uppercase, pipe-separated), sorted A–Z; plus a TOTAL |
 
-### Metric definitions the generator uses (confirm with the account owner)
+### Data source — J.B. Hunt extract, NOT McLeod (confirmed by reading a filed report)
 
-- **OTP** — carrier **arrived** at the origin by the scheduled time (PU `ActualArrival <= sched`).
-- **OT Dispatch** — carrier **departed** the origin by the scheduled time (PU `ActualDeparture <= sched`).
-- **OTD** — carrier **arrived** at the destination by the scheduled time (SO `ActualArrival <= sched`).
-- **Scheduled reference (`sched`)** = `COALESCE(OrigSchedLate, SchedArriveLate)` — the
-  ORIGINAL tender commitment when present, else the current appointment. A reschedule must
-  not erase a miss.
-- **Measurable Total** for a metric = loads on the lane that have BOTH the actual and the
-  scheduled timestamp; a load missing either counts in Load Count but not in that metric's
-  %, so missing data never inflates or deflates the score.
+Reading a real filed report (May 2026, opened as `.xlsx`) settled the method. The workbook
+has three sheets: an **Overview Summary By Lane** (the report body), an Overview by Trip,
+and a **"… Raw Data With Reason Codes"** tab that is a **J.B. Hunt data extract** — one row
+per load with JBH's Contract ID (`0029H`), SV Trip ID, Load ID, `O/D PAIR`, and JBH's
+scheduled/planned vs actual times, from which three flags are set: `ON TIME Arrival Y/N`,
+`Dispatch on time Y/N`, `ON TIME DELIVERY y/n` (or `Order is VOID`), plus up to three reason
+codes. The Overview tab just aggregates those flags per lane. **So the authoritative on-time
+numbers are JBH's, and the generator consumes the raw extract — it does not recompute on-time
+from McLeod.**
+
+Exact aggregation the generator reproduces (matches the workbook's `COUNTIF/COUNTIFS`):
+
+- **Load Count** = every raw row for the lane, INCLUDING `Order is VOID` rows.
+- **OTP% / OT Dispatch% / OTD%** = `count(flag = "Y") / Load Count`, one rounded percentage
+  per cell (the report shows `89%`, not counts). A VOID row is in the denominator but never a
+  "Y", so it lowers the lane's %, exactly as the sheet does.
+- **TOTAL row %** = the **unweighted mean of the per-lane percentages** (full precision) —
+  the workbook's total is an average of lanes, not load-weighted. (`overall_load_weighted`
+  is also returned for cross-reference, as is JBH's void-excluded headline.)
+
+**Verified: the generator reproduces the filed May 2026 Overview exactly — 27/27 lanes, 0
+differences — from that month's raw-data tab.** McLeod is only an optional independent
+cross-check (`report_usps_self_report.sql`): map JBH Load ID → McLeod order and compare
+Delta's own times to JBH's to flag disagreements.
 
 ### `.xlsb` read limitation (recorded)
 
 Graph's file-conversion read (`read_resource`) **cannot open `.xlsb`** — it returns
 `VALIDATION_ERROR: MIME type 'application/vnd.ms-excel.sheet.binary.macroenabled.12' is not
-allowed` (the allow-list has `.xls` and `.xlsx`, not the binary macro format). The exact
-column/row structure above was recovered from the **SharePoint search index** (which
-extracts text from the workbook). To verify exact cell layout, formulas, or hidden columns,
-**re-save the template once as `.xlsx`** and Graph reads it directly; the generator does not
-need this — it produces the data rows from DGLIQ.
+allowed` (the allow-list has `.xls` and `.xlsx`, not the binary macro format). **Re-save the
+`.xlsb` as `.xlsx` once** and Graph reads every cell (that is how the May report was read).
+Feed the generator the `Raw Data With Reason Codes` tab (as CSV) and it reproduces the
+Overview.
 
 ### Output packaging
 
@@ -124,15 +140,16 @@ final packaging stays a human/gated step and has two options:
 
 ## To finish
 
-- **CONFIRM the USPS McLeod customer code** (`report_usps_self_report.sql` assumes
-  `UNITMETN`; the GEGW book brokered under J.B. Hunt tender 0029H may sit under a J.B. Hunt
-  customer code — verify in McLeod).
-- **CONFIRM the lane-number source** (the "(89)" id) — where McLeod stores it (a stop/order
-  RefNumber or user field), so the SQL selects the right column; today it maps `pu.RefNumber`.
-- **CONFIRM the OT Dispatch scheduled reference** if USPS defines a dispatch cutoff distinct
-  from the pickup appointment.
-- Optionally re-save the `.xlsb` template as `.xlsx` once so Graph can read exact cell
-  layout/formulas (not required for the data — nice for byte-exact formatting).
+- **Automate the raw-data extract.** The generator is proven against a real month; the open
+  question is where the JBH raw data comes from each month (a J.B. Hunt portal export, an
+  emailed file, or an EDI/API feed) so the runner can fetch it instead of a human pasting it.
+- **Reason codes stay human.** The `Comments` / reason columns are judgement (e.g. "POSTAL",
+  "Carrier", "Trailer issue") — the generator carries through whatever is supplied; it does
+  not invent them.
+- **Confirm the program label** per book (the sample read was `RTH`; the USPS/JBH GEGW book is
+  `GEGW`) — passed as the third arg / `program=`.
+- Re-save any `.xlsb` you want me to read as `.xlsx` (Graph cannot open `.xlsb`).
 - Re-authorize the **Microsoft 365** connector (drafting/attaching).
-- Stand the runner on the DGLIQ-accessible host (shared with the accessorial service).
-- Decide the anomaly-hold thresholds.
+- Stand the runner on the accessible host; decide the anomaly-hold thresholds.
+- Optional: run `report_usps_self_report.sql` as a McLeod cross-check to flag loads where
+  Delta's own times disagree with the JBH extract.

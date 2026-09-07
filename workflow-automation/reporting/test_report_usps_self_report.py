@@ -1,6 +1,6 @@
-"""Tests for the USPS GEGW Self Report generator — the on-time / measurable-total rules.
+"""Tests for the USPS Self Report generator — the real JBH-extract aggregation.
 
-Run: python3 -m pytest test_report_usps_self_report.py   (or python3 test_report_usps_self_report.py)
+Run: python3 -m pytest test_report_usps_self_report.py  (or python3 test_report_usps_self_report.py)
 """
 
 import csv
@@ -9,8 +9,7 @@ import tempfile
 
 import report_usps_self_report as R
 
-_COLS = ["order_id", "lane_number", "pu_city", "pu_state", "pu_sched", "pu_arrival",
-         "pu_departure", "so_city", "so_state", "so_sched", "so_arrival", "comment"]
+_COLS = ["lane", "otp_flag", "dispatch_flag", "otd_flag", "reason1", "load_id"]
 
 
 def _csv(rows):
@@ -24,11 +23,9 @@ def _csv(rows):
     return path
 
 
-def _row(**kw):
-    base = dict(order_id="1", lane_number="89", pu_city="Philadelphia", pu_state="PA",
-                so_city="Phoenix", so_state="AZ")
-    base.update(kw)
-    return base
+def _row(lane="CINCINNATI, OH | DENVER, CO", otp="Y", disp="Y", otd="Y", reason1="", load_id=""):
+    return dict(lane=lane, otp_flag=otp, dispatch_flag=disp, otd_flag=otd,
+                reason1=reason1, load_id=load_id)
 
 
 def _build(rows):
@@ -39,111 +36,107 @@ def _build(rows):
         os.remove(p)
 
 
-def test_dt_parses_formats_and_blanks():
-    assert R._dt("2026-08-12 15:00:00") is not None
-    assert R._dt("2026-08-12T15:00:00.123") is not None      # ISO + fractional
-    assert R._dt("08/12/2026 15:00") is not None
-    assert R._dt("") is None and R._dt("   ") is None and R._dt("garbage") is None
+def test_flag_normalisation():
+    assert R._flag("Y") == "Y" and R._flag(" y ") == "Y"
+    assert R._flag("N") == "N"
+    assert R._flag("Order is VOID") == "VOID" and R._flag("") == "VOID" and R._flag("x") == "VOID"
 
 
-def test_on_time_and_late_arrival():
+def test_single_percentage_per_metric():
+    # 3 loads: OTP 2/3, all dispatch Y, OTD 1/3
     rep = _build([
-        _row(order_id="1", pu_sched="2026-08-12 15:00", pu_arrival="2026-08-12 14:30",
-             pu_departure="2026-08-12 15:00", so_sched="2026-08-13 09:00",
-             so_arrival="2026-08-13 08:00"),                      # all on time
-        _row(order_id="2", pu_sched="2026-08-12 15:00", pu_arrival="2026-08-12 16:30",
-             pu_departure="2026-08-12 17:00", so_sched="2026-08-13 09:00",
-             so_arrival="2026-08-13 10:30"),                      # all late
+        _row(otp="Y", disp="Y", otd="Y"),
+        _row(otp="Y", disp="Y", otd="N"),
+        _row(otp="N", disp="Y", otd="N"),
+    ])
+    lane = rep["lanes"][0]
+    assert lane["load_count"] == 3
+    assert lane["otp_pct"] == 67          # round(100*2/3)
+    assert lane["ot_dispatch_pct"] == 100
+    assert lane["otd_pct"] == 33          # round(100*1/3)
+
+
+def test_void_counts_in_denominator_not_numerator():
+    # 2 loads, 1 VOID -> OTP = 1 Y / 2 = 50% (matches the workbook's per-lane formula)
+    rep = _build([
+        _row(otp="Y", disp="Y", otd="Y"),
+        _row(otp="Order is VOID", disp="Order is VOID", otd="Order is VOID"),
     ])
     lane = rep["lanes"][0]
     assert lane["load_count"] == 2
-    assert lane["otp"] == {"on": 1, "total": 2, "pct": 50.0}
-    assert lane["ot_dispatch"] == {"on": 1, "total": 2, "pct": 50.0}
-    assert lane["otd"] == {"on": 1, "total": 2, "pct": 50.0}
+    assert lane["otp_pct"] == 50 and lane["ot_dispatch_pct"] == 50 and lane["otd_pct"] == 50
 
 
-def test_equal_timestamp_counts_on_time():
-    rep = _build([_row(pu_sched="2026-08-12 15:00", pu_arrival="2026-08-12 15:00",
-                       pu_departure="2026-08-12 15:00", so_sched="2026-08-13 09:00",
-                       so_arrival="2026-08-13 09:00")])
-    lane = rep["lanes"][0]
-    assert lane["otp"]["on"] == 1 and lane["otd"]["on"] == 1 and lane["ot_dispatch"]["on"] == 1
-
-
-def test_missing_data_excluded_from_total_but_counted_in_loads():
-    rep = _build([
-        _row(order_id="1", pu_sched="2026-08-12 15:00", pu_arrival="2026-08-12 14:00",
-             pu_departure="", so_sched="2026-08-13 09:00", so_arrival=""),   # no depart, no SO arrival
-    ])
+def test_all_void_lane_is_zero_percent():
+    rep = _build([_row(otp="Order is VOID", disp="Order is VOID", otd="Order is VOID")])
     lane = rep["lanes"][0]
     assert lane["load_count"] == 1
-    assert lane["otp"] == {"on": 1, "total": 1, "pct": 100.0}       # measurable
-    assert lane["ot_dispatch"]["total"] == 0 and lane["ot_dispatch"]["pct"] is None
-    assert lane["otd"]["total"] == 0 and lane["otd"]["pct"] is None
+    assert lane["otp_pct"] == 0 and lane["otd_pct"] == 0
 
 
-def test_lane_grouping_and_labels():
+def test_lanes_sorted_alphabetically():
+    rep = _build([_row(lane="ZZZ, TX | AAA, CA"), _row(lane="AAA, CA | BBB, TX")])
+    assert [l["lane"] for l in rep["lanes"]] == ["AAA, CA | BBB, TX", "ZZZ, TX | AAA, CA"]
+
+
+def test_total_is_unweighted_mean_of_lane_pcts():
+    # lane A: 1 load 100% OTP ; lane B: 4 loads 0% OTP
+    # unweighted mean = (100+0)/2 = 50  (NOT load-weighted 20)
+    rep = _build(
+        [_row(lane="A, X | B, Y", otp="Y")] +
+        [_row(lane="C, X | D, Y", otp="N") for _ in range(4)]
+    )
+    assert rep["totals"]["load_count"] == 5
+    assert rep["totals"]["otp_pct"] == 50
+    assert rep["overall_load_weighted"]["otp_pct"] == 20    # cross-ref weighted figure
+
+
+def test_comments_from_reason_codes_deduped():
     rep = _build([
-        _row(order_id="1", lane_number="89"),
-        _row(order_id="2", lane_number="89"),
-        _row(order_id="3", lane_number="", pu_city="Memphis", pu_state="TN",
-             so_city="Dallas", so_state="TX"),
+        _row(reason1="POSTAL"), _row(reason1="POSTAL"), _row(reason1="Carrier"),
     ])
-    labels = [l["lane"] for l in rep["lanes"]]
-    assert "Philadelphia, PA - Phoenix, AZ (89)" in labels        # with lane number
-    assert "Memphis, TN - Dallas, TX" in labels                   # no lane number -> no parens
-    phx = next(l for l in rep["lanes"] if l["lane"].startswith("Philadelphia"))
-    assert phx["load_count"] == 2
+    assert rep["lanes"][0]["comments"] == "POSTAL; Carrier"
 
 
-def test_lanes_sorted_by_volume_desc():
-    rep = _build([
-        _row(order_id="1", pu_city="A", so_city="B"),
-        _row(order_id="2", pu_city="C", so_city="D"),
-        _row(order_id="3", pu_city="C", so_city="D"),
-    ])
-    assert rep["lanes"][0]["lane"].startswith("C,")               # 2-load lane first
-    assert rep["lanes"][0]["load_count"] == 2
+def test_tolerant_headers_match_sheet_labels():
+    # use the workbook's exact header labels
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["O/D PAIR", "ON TIME Arrival Y/N", "Dispatch on time Y/N",
+                    "ON TIME DELIVERY y/n"])
+        w.writerow(["CINCINNATI, OH | DENVER, CO", "Y", "N", "Y"])
+    try:
+        rep = R.build_report(path, "2026-08")
+    finally:
+        os.remove(path)
+    lane = rep["lanes"][0]
+    assert lane["otp_pct"] == 100 and lane["ot_dispatch_pct"] == 0 and lane["otd_pct"] == 100
 
 
-def test_totals_row_sums_all_lanes():
-    rep = _build([
-        _row(order_id="1", pu_city="A", so_city="B", pu_sched="2026-08-01 10:00",
-             pu_arrival="2026-08-01 09:00", pu_departure="2026-08-01 10:00",
-             so_sched="2026-08-02 10:00", so_arrival="2026-08-02 09:00"),
-        _row(order_id="2", pu_city="C", so_city="D", pu_sched="2026-08-01 10:00",
-             pu_arrival="2026-08-01 11:00", pu_departure="2026-08-01 12:00",
-             so_sched="2026-08-02 10:00", so_arrival="2026-08-02 11:00"),
-    ])
-    t = rep["totals"]
-    assert t["lane"] == "TOTAL" and t["load_count"] == 2
-    assert t["otp"] == {"on": 1, "total": 2, "pct": 50.0}
-
-
-def test_comments_deduped_and_joined():
-    rep = _build([
-        _row(order_id="1", comment="Trailer issue; carrier"),
-        _row(order_id="2", comment="Trailer issue; carrier"),     # dup -> collapsed
-        _row(order_id="3", comment="Weather delay"),
-    ])
-    assert rep["lanes"][0]["comments"] == "Trailer issue; carrier; Weather delay"
-
-
-def test_render_rows_shape_and_header():
-    rep = _build([_row(pu_sched="2026-08-12 15:00", pu_arrival="2026-08-12 14:00",
-                       pu_departure="2026-08-12 15:00", so_sched="2026-08-13 09:00",
-                       so_arrival="2026-08-13 08:00")])
+def test_render_rows_shape_and_percent_format():
+    rep = _build([_row(otp="Y", disp="N", otd="Y")])
     rows = R.render_rows(rep)
     assert rows[0] == R._HEADERS and len(rows[0]) == 6
-    assert rows[-1][0] == "TOTAL"                                 # last row is the total
-    assert rows[1][1] == 1                                        # load count cell
-    assert rows[1][2] == "1 / 1 / 100%"                           # OTP cell format
+    assert rows[1][2] == "100%" and rows[1][3] == "0%"      # single-% cells
+    assert rows[-1][0] == "TOTAL"
 
 
-def test_empty_input():
-    rep = _build([])
-    assert rep["lanes"] == [] and rep["totals"]["load_count"] == 0
-    assert rep["totals"]["otp"]["pct"] is None
+def test_missing_lane_column_raises():
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        csv.writer(fh).writerow(["foo", "bar"])
+    try:
+        raised = False
+        try:
+            R.build_report(path, "2026-08")
+        except ValueError:
+            raised = True
+        assert raised
+    finally:
+        os.remove(path)
 
 
 if __name__ == "__main__":

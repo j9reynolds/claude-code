@@ -1,46 +1,53 @@
 """USPS GEGW "Self Report" — generator (opportunity #6, recurring reports).
 
-Reproduces the monthly report Delta files to J.B. Hunt for the USPS GEGW surface
-network (tender 0029H) — today hand-built in an .xlsb macro workbook titled
-"J.B. Hunt Transport GEGW Performance Overview". It is an INTERNAL/partner report
-(to J.B. Hunt), not a customer-facing narrative.
+Reproduces the monthly report Delta files to J.B. Hunt for the USPS surface network
+(tender 0029H), the workbook titled "<Program> Performance Overview" (Overview Summary
+By Lane).
 
-Layout it reproduces (one row per lane, plus a TOTAL row):
+IMPORTANT — data source (confirmed by reading a real filed report, May 2026):
+This report is NOT built from McLeod. It is built from the **J.B. Hunt data extract**
+("<Program> Raw Data With Reason Codes" tab): one row per load carrying JBH's own
+Contract ID (0029H), SV Trip ID, Load ID, O/D PAIR, and JBH's scheduled/planned vs
+actual times, from which three **Y / N / "Order is VOID"** on-time flags are set, plus
+up to three reason codes. Delta staff fill the reason codes; the Overview tab just
+aggregates the flags per lane. So the authoritative on-time numbers are JBH's, and this
+generator consumes that raw extract — it does not recompute on-time from McLeod times.
+(McLeod can serve as an independent cross-check; see report_usps_self_report.sql.)
 
-    Lane                              | Load Count | OTP           | OT Dispatch   | OTD           | Comments
-                                      |            | On Time/Tot/% | On Time/Tot/% | On Time/Tot/% |
-    Philadelphia, PA - Phoenix, AZ(89)|     6      |   5 / 6 / 83% |   6 / 6 /100% |   5 / 6 / 83% | Trailer issue; carrier
+Overview layout it reproduces (one row per lane + a TOTAL row):
 
-Three performance metrics, each computed as On-Time / Measurable-Total / %:
-  * OTP         On-Time Pickup   — carrier ARRIVED at origin by the scheduled time.
-  * OT Dispatch On-Time Dispatch — carrier DEPARTED origin by the scheduled time.
-  * OTD         On-Time Delivery — carrier ARRIVED at destination by the scheduled time.
+    Lane                              | Load Count | OTP  | OT Dispatch | OTD  | Comments
+    CINCINNATI, OH | DENVER, CO       |    36      | 89%  |    94%      | 69%  | ...
 
-Business rules (see recurring-reports-spec.md — confirm with the account owner):
-  * Scheduled reference = the ORIGINAL tender time when present (OrigSchedLate),
-    else the current appointment late window (SchedArriveLate). USPS/JBH scores the
-    original commitment; a reschedule does not erase a miss. The SQL emits this
-    already-coalesced as *_sched.
-  * "On time" = actual <= scheduled (arrival for OTP/OTD, departure for Dispatch).
-  * "Measurable total" for a metric = loads on the lane that have BOTH the actual and
-    the scheduled timestamp. A load missing either is counted in Load Count but not in
-    that metric's total, so the % is never inflated or deflated by missing data.
+Exact aggregation (matches the workbook's COUNTIF/COUNTIFS formulas):
+  * Load Count = every raw row for the lane, INCLUDING "Order is VOID" rows.
+  * OTP%  = count(ON TIME Arrival == "Y")  / Load Count      (single percentage)
+    OT Dispatch% = count(Dispatch on time == "Y") / Load Count
+    OTD%  = count(ON TIME DELIVERY == "Y") / Load Count
+    (A VOID row is in the denominator but is never a "Y", so it lowers the lane's %,
+    exactly as the sheet does.)
+  * TOTAL row % = the UNWEIGHTED mean of the per-lane percentages (full precision),
+    which is what the workbook's total row shows — not a load-weighted average.
+  * A void-excluded overall figure (JBH's headline S/T/U cells) is also returned as
+    `overall_void_excluded` for cross-reference.
 
-Pure / no side effects: computes and returns a dict; render_text() / render_rows()
-format it. Delivery (Outlook draft for the owner to review) is a separate, gated step.
+Cells display as a single rounded percentage — the report shows "89%", not counts.
 
-Runs off either:
-  * the DGLIQ per-load query output (production — report_usps_self_report.sql), or
-  * any CSV with the columns below (offline/sample runs).
+Pure / no side effects. Delivery (fill the template, Outlook draft for review) is a
+separate, gated step. Verified to reproduce the real May-2026 Overview exactly
+(27/27 lanes, 0 differences) from that month's raw-data tab.
 
-Input CSV columns (one row per order/load):
-  order_id, lane_number(optional),
-  pu_city, pu_state, pu_sched, pu_arrival, pu_departure,
-  so_city, so_state, so_sched, so_arrival,
-  comment(optional)
+Input CSV columns (one row per load; from the JBH raw-data extract). Header names are
+matched case-insensitively and tolerate the sheet's exact labels:
+  lane            (aka "O/D PAIR")
+  otp_flag        (aka "ON TIME Arrival Y/N")
+  dispatch_flag   (aka "Dispatch on time Y/N")
+  otd_flag        (aka "ON TIME DELIVERY y/n")
+  reason1, reason2, reason3   (optional; -> Comments)
+  load_id         (optional)
 
 Usage (offline):
-  python3 report_usps_self_report.py stops.csv 2026-08
+  python3 report_usps_self_report.py raw_data.csv 2026-08
 """
 
 from __future__ import annotations
@@ -48,151 +55,158 @@ from __future__ import annotations
 import csv
 import sys
 from collections import OrderedDict
-from datetime import datetime
+
+VOID = "order is void"
+
+# tolerant header aliases -> canonical field
+_ALIASES = {
+    "lane": "lane", "o/d pair": "lane", "od pair": "lane", "o/d": "lane",
+    "otp_flag": "otp", "on time arrival y/n": "otp", "on time arrival": "otp",
+    "ot arrival y/n": "otp",
+    "dispatch_flag": "disp", "dispatch on time y/n": "disp",
+    "dispatch on time": "disp", "ot dispatch y/n": "disp",
+    "otd_flag": "otd", "on time delivery y/n": "otd", "on time delivery": "otd",
+    "ot delivery y/n": "otd",
+    "reason1": "r1", "reason 1": "r1", "reason2": "r2", "reason 2": "r2",
+    "reason3": "r3", "reason 3": "r3",
+    "load_id": "load_id", "load id": "load_id",
+}
 
 
 def _cl(v):
     return (v or "").strip().strip('"').strip()
 
 
-def _dt(v):
-    """Parse a McLeod/SQL datetime; return None if blank/unparseable."""
-    s = _cl(v)
-    if not s:
-        return None
-    s = s.replace("T", " ")
-    if "." in s:                       # drop fractional seconds
-        s = s.split(".", 1)[0]
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S",
-                "%m/%d/%Y %H:%M", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return None
+def _flag(v):
+    """Return 'Y', 'N', or 'VOID' (VOID also for blank/unknown)."""
+    s = _cl(v).lower()
+    if s == "y":
+        return "Y"
+    if s == "n":
+        return "N"
+    return "VOID"                       # "Order is VOID", blank, or anything else
 
 
-class _Metric:
-    """On-Time / Measurable-Total counter for one lane + one metric."""
-    __slots__ = ("on", "total")
-
-    def __init__(self):
-        self.on = 0
-        self.total = 0
-
-    def observe(self, actual, sched):
-        if actual is None or sched is None:
-            return                      # not measurable — excluded from total
-        self.total += 1
-        if actual <= sched:
-            self.on += 1
-
-    def pct(self):
-        return round(100.0 * self.on / self.total, 0) if self.total else None
-
-    def cell(self):
-        p = self.pct()
-        return f"{self.on} / {self.total} / {'' if p is None else str(int(p)) + '%'}".strip()
+def _norm_headers(fieldnames):
+    out = {}
+    for fn in fieldnames or []:
+        key = _ALIASES.get(_cl(fn).lower())
+        if key:
+            out[key] = fn
+    return out
 
 
 class _Lane:
-    __slots__ = ("label", "loads", "otp", "disp", "otd", "comments")
+    __slots__ = ("label", "n", "otp", "disp", "otd", "comments")
 
     def __init__(self, label):
         self.label = label
-        self.loads = 0
-        self.otp = _Metric()
-        self.disp = _Metric()
-        self.otd = _Metric()
+        self.n = 0
+        self.otp = self.disp = self.otd = 0      # count of "Y"
         self.comments = []
 
-    def add(self, row):
-        self.loads += 1
-        pu_arr, pu_dep = _dt(row.get("pu_arrival")), _dt(row.get("pu_departure"))
-        pu_sch = _dt(row.get("pu_sched"))
-        so_arr, so_sch = _dt(row.get("so_arrival")), _dt(row.get("so_sched"))
-        self.otp.observe(pu_arr, pu_sch)
-        self.disp.observe(pu_dep, pu_sch)
-        self.otd.observe(so_arr, so_sch)
-        c = _cl(row.get("comment"))
-        if c and c not in self.comments:
-            self.comments.append(c)
+    def add(self, otp, disp, otd, reasons):
+        self.n += 1
+        if otp == "Y":
+            self.otp += 1
+        if disp == "Y":
+            self.disp += 1
+        if otd == "Y":
+            self.otd += 1
+        for r in reasons:
+            r = _cl(r)
+            if r and r not in self.comments:
+                self.comments.append(r)
+
+    def fracs(self):
+        return (self.otp / self.n, self.disp / self.n, self.otd / self.n) if self.n else (None, None, None)
 
     def as_dict(self):
+        fo, fd, ft = self.fracs()
+        pc = lambda f: None if f is None else round(100 * f)
         return {
-            "lane": self.label, "load_count": self.loads,
-            "otp": {"on": self.otp.on, "total": self.otp.total, "pct": self.otp.pct()},
-            "ot_dispatch": {"on": self.disp.on, "total": self.disp.total, "pct": self.disp.pct()},
-            "otd": {"on": self.otd.on, "total": self.otd.total, "pct": self.otd.pct()},
+            "lane": self.label, "load_count": self.n,
+            "otp_pct": pc(fo), "ot_dispatch_pct": pc(fd), "otd_pct": pc(ft),
+            "otp_yes": self.otp, "ot_dispatch_yes": self.disp, "otd_yes": self.otd,
             "comments": "; ".join(self.comments),
         }
 
 
-def _lane_label(row):
-    base = f"{_cl(row.get('pu_city'))}, {_cl(row.get('pu_state'))} - " \
-           f"{_cl(row.get('so_city'))}, {_cl(row.get('so_state'))}"
-    ln = _cl(row.get("lane_number"))
-    return f"{base} ({ln})" if ln else base
-
-
-def build_report(stops_csv, month):
-    """month = 'YYYY-MM' (informational header only; filter the CSV upstream via SQL).
-    Returns {title, month, lanes:[...], totals:{...}}."""
+def build_report(raw_csv, month, program="GEGW"):
+    """month = 'YYYY-MM' (header only). Returns {title, month, lanes, totals, ...}."""
     lanes = OrderedDict()
-    with open(stops_csv, encoding="utf-8-sig") as fh:
-        for row in csv.DictReader(fh):
-            label = _lane_label(row)
-            if label not in lanes:
-                lanes[label] = _Lane(label)
-            lanes[label].add(row)
+    with open(raw_csv, encoding="utf-8-sig") as fh:
+        rd = csv.DictReader(fh)
+        h = _norm_headers(rd.fieldnames)
+        if "lane" not in h:
+            raise ValueError(f"input needs a lane / 'O/D PAIR' column; saw {rd.fieldnames}")
+        for row in rd:
+            lane = _cl(row[h["lane"]])
+            if not lane:
+                continue
+            L = lanes.setdefault(lane, _Lane(lane))
+            L.add(_flag(row.get(h.get("otp", ""))),
+                  _flag(row.get(h.get("disp", ""))),
+                  _flag(row.get(h.get("otd", ""))),
+                  [row.get(h.get(k, ""), "") for k in ("r1", "r2", "r3")])
 
-    ordered = sorted(lanes.values(), key=lambda l: (-l.loads, l.label))
-    tot = _Lane("TOTAL")
-    for l in ordered:
-        tot.loads += l.loads
-        for m_dst, m_src in ((tot.otp, l.otp), (tot.disp, l.disp), (tot.otd, l.otd)):
-            m_dst.on += m_src.on
-            m_dst.total += m_src.total
+    ordered = sorted(lanes.values(), key=lambda l: l.label)     # report lists lanes A-Z
+    dicts = [l.as_dict() for l in ordered]
+
+    # TOTAL row: count = sum; % = unweighted mean of per-lane fractions (workbook behaviour)
+    n_total = sum(l.n for l in ordered)
+    def mean_pct(idx):
+        fs = [l.fracs()[idx] for l in ordered if l.n]
+        return round(100 * sum(fs) / len(fs)) if fs else None
+    totals = {"lane": "TOTAL", "load_count": n_total,
+              "otp_pct": mean_pct(0), "ot_dispatch_pct": mean_pct(1), "otd_pct": mean_pct(2),
+              "comments": ""}
+
+    # Load-weighted overall (Y / all-rows-incl-void), for cross-reference only.
+    overall = {
+        "otp_pct": (round(100 * sum(l.otp for l in ordered) /
+                    sum(l.n for l in ordered)) if n_total else None),
+        "ot_dispatch_pct": (round(100 * sum(l.disp for l in ordered) /
+                            sum(l.n for l in ordered)) if n_total else None),
+        "otd_pct": (round(100 * sum(l.otd for l in ordered) /
+                    sum(l.n for l in ordered)) if n_total else None),
+        "note": "load-weighted incl VOID in denominator",
+    }
 
     return {
-        "title": "J.B. Hunt Transport GEGW Performance Overview",
-        "month": month,
-        "lanes": [l.as_dict() for l in ordered],
-        "totals": tot.as_dict(),
-        "lane_count": len(ordered),
+        "title": f"{program} Performance Overview",
+        "month": month, "lanes": dicts, "totals": totals,
+        "overall_load_weighted": overall, "lane_count": len(ordered),
     }
 
 
-_HEADERS = ("Lane", "Load Count", "OTP (on/tot/%)", "OT Dispatch (on/tot/%)",
-            "OTD (on/tot/%)", "Comments")
+_HEADERS = ("Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Comments")
 
 
 def render_rows(rep):
-    """Return the report as a list of row tuples matching the .xlsb column order."""
-    def _cells(d):
-        def c(m):
-            p = m["pct"]
-            return f"{m['on']} / {m['total']} / {'' if p is None else str(int(p)) + '%'}"
-        return (d["lane"], d["load_count"], c(d["otp"]), c(d["ot_dispatch"]),
-                c(d["otd"]), d["comments"])
+    def cells(d):
+        p = lambda v: "" if v is None else f"{v}%"
+        return (d["lane"], d["load_count"], p(d["otp_pct"]),
+                p(d["ot_dispatch_pct"]), p(d["otd_pct"]), d.get("comments", ""))
     rows = [_HEADERS]
-    rows.extend(_cells(l) for l in rep["lanes"])
-    rows.append(_cells(rep["totals"]))
+    rows.extend(cells(l) for l in rep["lanes"])
+    rows.append(cells(rep["totals"]))
     return rows
 
 
 def render_text(rep) -> str:
     rows = [tuple(str(c) for c in r) for r in render_rows(rep)]
-    widths = [max(len(r[i]) for r in rows) for i in range(len(_HEADERS))]
-    line = lambda r: "  ".join(c.ljust(widths[i]) for i, c in enumerate(r))
+    w = [max(len(r[i]) for r in rows) for i in range(len(_HEADERS))]
+    line = lambda r: "  ".join(c.ljust(w[i]) for i, c in enumerate(r))
     out = [f"{rep['title']} — {rep['month']}  ({rep['lane_count']} lanes)",
-           line(rows[0]), "  ".join("-" * w for w in widths)]
+           line(rows[0]), "  ".join("-" * x for x in w)]
     out.extend(line(r) for r in rows[1:])
     return "\n".join(out)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__)
         sys.exit(1)
-    print(render_text(build_report(sys.argv[1], sys.argv[2])))
+    prog = sys.argv[3] if len(sys.argv) == 4 else "GEGW"
+    print(render_text(build_report(sys.argv[1], sys.argv[2], prog)))
