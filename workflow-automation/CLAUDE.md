@@ -101,15 +101,27 @@ pyodbc), McLeod read/write scopes, shadow→assisted→auto rollout, guardrails,
 checklist. Open blockers: McLeod write scopes + test company, role map, DB backups, host on
 Delta network with DB02 access + OCR binaries.
 
-#6 RECURRING REPORTS — STARTED (`reporting/`). Monthly customer performance report:
-`report_customer_monthly.py` (build_report/render, pure) + `report_customer_monthly.sql`
-(DGLIQ DGL_TMS.tms — Order/Movement/Stop/Customer/Carrier; the normalized warehouse is the
-right source, live connector search is 50-row capped) + `recurring-reports-spec.md`
-(catalog, monthly cron, M365 draft-for-approval delivery). Sample USPS Aug-2026: 177 loads,
-$622.7k rev, 6.0% margin, 100% on-time, 52 carriers, $1,620 accessorials billed (low).
-Artifact: https://claude.ai/code/artifact/907765c1-6ec8-40cd-8e86-df4cbcd025e3
-GATED: email delivery needs Microsoft 365 re-auth (disconnected). Account-health report is
-already in flight internally (Command Center PR #12) — reuse, don't duplicate.
+#6 RECURRING REPORTS — BUILT the real USPS report (`reporting/`).
+THE USPS "MONTHLY REPORT" IS an INTERNAL/PARTNER report to J.B. Hunt, tender 0029H — a
+macro `.xlsb` template titled "J.B. Hunt Transport GEGW Performance Overview", NOT a
+customer-facing narrative. File: `0029H Self Report - Delta Group Logistics - <Month>.xlsb`
+(SharePoint `…/USPS/` + K.Cash OneDrive). Emailed by J.Reynolds → K.Cash, CC S.Ivankovic &
+P.Drzewiecki, ~1st of month for prior month. Columns: Lane | Load Count | OTP | OT Dispatch |
+OTD | Comments; each metric = On Time / Total / %; rows per lane (e.g. "Philadelphia, PA -
+Phoenix, AZ (89)") + TOTAL.
+Generator `report_usps_self_report.py` (10/10 tests) + `report_usps_self_report.sql` reproduce
+it from DGLIQ. Metric defs (CONFIRM): OTP = PU ActualArrival<=sched; OT Dispatch = PU
+ActualDeparture<=sched; OTD = SO ActualArrival<=sched; sched = COALESCE(OrigSchedLate,
+SchedArriveLate) (original tender commitment wins); "measurable total" excludes loads missing
+either timestamp. OPEN CONFIRMS: USPS McLeod customer code (assumed UNITMETN; may be a J.B.Hunt
+code), the "(89)" lane-number source (mapped pu.RefNumber), OT-Dispatch cutoff if distinct.
+.xlsb READ LIMIT: Graph read_resource CANNOT open .xlsb — VALIDATION_ERROR unsupported_mime
+'application/vnd.ms-excel.sheet.binary.macroenabled.12' (allow-list has .xls/.xlsx only).
+Structure recovered from the SharePoint search index; to read exact cells, re-save once as
+.xlsx. Also BUILT a reusable generic monthly customer-performance report
+(`report_customer_monthly.py` + `.sql`, DGLIQ DGL_TMS.tms) — keep, it's a different artifact.
+GATED: email/attach delivery needs Microsoft 365 re-auth (disconnected). Account-health report
+is already in flight internally (Command Center PR #12) — reuse, don't duplicate.
 DGLIQ NOTE: dgl-mcp now exposes dgliq_describe_schema/list_databases (schema only, no
 free-form query tool) + tms_* + pm_* + rec_*. DGL_TMS schemas: tms, ingest, comms, ops,
 intel, retrieval, rec, chat. Reports run as scheduled SQL on-network (no query tool + caps).
