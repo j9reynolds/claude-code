@@ -94,7 +94,10 @@ Two things that will bite you if nobody says them out loud:
 `connector` is usually the shortest path to a working McLeod source, because the connector already holds the credential — you configure tool names, not secrets. Two things it needs from you:
 
 - **List the read tools explicitly.** The watcher calls only what `read_tools` names and refuses anything in `never_call`. A connector that reaches a TMS generally exposes writes beside its reads, and the watcher is read-only.
-- **Set `page_limit` to what a single call actually returns.** Connectors commonly cap results and order them newest-first, which cannot be paged backwards. The watcher treats a full page as an incomplete read and reports a coverage gap rather than advancing the cursor over events it never saw — a silent advance drops the oldest ones, which are exactly the ones that have been waiting longest.
+- **Name the fields that report truncation** (`count_field`, `cap_field`). Connectors commonly cap results and order them newest-first, which cannot be paged backwards. When the count equals the cap the watcher treats the page as an *incomplete* read and reports a coverage gap rather than advancing the cursor over events it never saw — a silent advance drops the oldest ones, which are exactly the ones that have been waiting longest.
+- **Say what the query cannot see, in `_coverage_comment`.** This matters more than it sounds. A search filtered on an order's *created* date never surfaces status changes or cancellations on older orders, so a connector offering only that filter gives you new-order coverage, not change coverage. The watcher repeats the caveat in every report instead of letting a clean cycle imply the TMS is fully watched. Closing that gap takes a changed-since filter on the connector, or the `sql` adapter against a replica.
+
+Cursors deserve one note: where the filter is date-granular but the returned timestamp is not, a sub-day cycle re-reads the current day every time. That is correct and cheap — the ledger's claim dedupes the repeats. Don't round the cursor forward to avoid it; that trades a free duplicate read for a silent miss.
 
 Credentials for `rest` come from the environment too — `auth.scheme` picks how they are sent:
 
