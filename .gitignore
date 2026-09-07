@@ -7,3 +7,8 @@
 # Python bytecode from plugin scripts
 __pycache__/
 *.pyc
+
+# Semgrep Guardian machine-local state (auth tokens, anonymous user id, expiry).
+# Written into whichever directory the guardian hook runs from, at any depth.
+# Per-machine and ephemeral - never commit.
+.semgrep/
