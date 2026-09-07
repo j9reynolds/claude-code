@@ -41,10 +41,27 @@ tools available: `search_orders` (cap 50, newest by ordered_date), `get_order`
 `resolve_identifier`. WRITE tool `create_comment` exists — **do not call without explicit
 authorization.**
 
-Connector limits (why it's not a bulk analytics source):
+Connector limits (why it's not a bulk analytics source) — **fixed in code, NOT yet deployed**:
 - `search_orders` capped at 50 rows → cannot page the whole ~tens-of-thousands-of-loads book.
 - `get_order` returns `otherchargetotal` as a **lump** (accessorials+fuel mixed), not
   itemized line items — customer-accessorial billing isn't separable from the connector alone.
+
+**MERGED to `master`: `j9reynolds/DGL_McLeod_MCP#3`** (2026-09-07) removes both limits **in
+code**. Merged is not deployed — the running service only changes when `update-mcp.ps1` does:
+- Row caps become parameters clamped to a deployed maximum (`Mcp:MaxRows` default 1000);
+  `search_orders` pages with `limit`/`offset` and reports `has_more`/`next_offset`.
+- New `mcleod_query` tool runs an arbitrary read-only SELECT — aggregates, joins, whole-book
+  scans, and the `other_charge` breakdown the lump `otherchargetotal` hides. Read-only rests on
+  `db_datareader` + `ApplicationIntent=ReadOnly` + a free-form guard; every call is audit-logged
+  to a new `read_audit` table.
+- Tested against a fake reader only (78 tests, green in the repo's new CI) — **never executed
+  against db02**. Before/at deploy, smoke-test `search_orders` with `limit`/`offset` and one
+  `mcleod_query` (e.g. `SELECT TOP 5 charge_id, LTRIM(RTRIM(descr)) AS descr, amount FROM
+  other_charge`, which also answers the open `other_charge` codes question).
+- **Until `update-mcp.ps1` has run, the deployed connector still has the 50-row cap and no
+  `mcleod_query`** — so the bulk-export path below is still the live plan. Once deployed, the
+  365-day leakage extract can run through `mcleod_query` instead of needing a dev to run SQL
+  on-network.
 
 Confirmed real schema (from connector responses): `orders`(id, customer_id, status
 [D=delivered/A/V/P], on_hold, curr_movement_id, freight_charge, otherchargetotal,
