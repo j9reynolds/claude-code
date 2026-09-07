@@ -101,6 +101,19 @@ pyodbc), McLeod read/write scopes, shadow→assisted→auto rollout, guardrails,
 checklist. Open blockers: McLeod write scopes + test company, role map, DB backups, host on
 Delta network with DB02 access + OCR binaries.
 
+#6 RECURRING REPORTS — STARTED (`reporting/`). Monthly customer performance report:
+`report_customer_monthly.py` (build_report/render, pure) + `report_customer_monthly.sql`
+(DGLIQ DGL_TMS.tms — Order/Movement/Stop/Customer/Carrier; the normalized warehouse is the
+right source, live connector search is 50-row capped) + `recurring-reports-spec.md`
+(catalog, monthly cron, M365 draft-for-approval delivery). Sample USPS Aug-2026: 177 loads,
+$622.7k rev, 6.0% margin, 100% on-time, 52 carriers, $1,620 accessorials billed (low).
+Artifact: https://claude.ai/code/artifact/907765c1-6ec8-40cd-8e86-df4cbcd025e3
+GATED: email delivery needs Microsoft 365 re-auth (disconnected). Account-health report is
+already in flight internally (Command Center PR #12) — reuse, don't duplicate.
+DGLIQ NOTE: dgl-mcp now exposes dgliq_describe_schema/list_databases (schema only, no
+free-form query tool) + tms_* + pm_* + rec_*. DGL_TMS schemas: tms, ingest, comms, ops,
+intel, retrieval, rec, chat. Reports run as scheduled SQL on-network (no query tool + caps).
+
 Validation already seen on real order 0197341: actual pickup dwell 16h20m (detention that
 caps at $150) vs the rep's hand-typed email times; `rate_confirmation_status`/`_sent_date`
 NULL → the contract's "signed rate con returned in real time" gate isn't being recorded (a
