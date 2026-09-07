@@ -1,0 +1,122 @@
+{
+  "_comment": "Copy to .claude/mcleod-ops/routes.json. The watcher matches each observed event against these routes top to bottom and dispatches the first match. Routes are data: edit this file to change routing, not the watcher's prompt.",
+  "autonomy_levels": {
+    "observe": "Read only. Summarize and report. Never write anywhere.",
+    "draft": "Read, plus prepare unsent drafts and proposed McLeod field changes for a human to approve.",
+    "act": "Read and write for real — send email, commit McLeod updates. Only ever set per-route, deliberately."
+  },
+  "routes": [
+    {
+      "workflow": "load-tender",
+      "agent": "load-tender-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox"],
+        "any_of": [
+          "subject contains 'load tender' or 'tender' or 'new load' or 'rate confirmation'",
+          "body contains a pickup city/state, delivery city/state, and a rate",
+          "attachment is a rate confirmation or tender PDF"
+        ]
+      },
+      "subject_ref": "order_number_if_present"
+    },
+    {
+      "workflow": "track-and-trace",
+      "agent": "track-and-trace-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox", "mcleod-tms"],
+        "any_of": [
+          "subject or body is a check call, ETA update, driver location, or delay notice",
+          "mcleod movement is in transit and has no tracking update within the SLA window",
+          "customer is asking 'where is my load' / 'status update'"
+        ]
+      },
+      "subject_ref": "movement_or_order_number"
+    },
+    {
+      "workflow": "appointment-scheduling",
+      "agent": "track-and-trace-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox"],
+        "any_of": [
+          "message requests, confirms, or reschedules a pickup or delivery appointment",
+          "message contains a dock/warehouse scheduling portal confirmation number"
+        ]
+      },
+      "subject_ref": "order_number_if_present"
+    },
+    {
+      "workflow": "carrier-onboarding",
+      "agent": "carrier-onboarding-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox"],
+        "any_of": [
+          "message is a carrier packet, W-9, certificate of insurance, or authority document",
+          "sender asks to be set up as a carrier or to update their carrier profile",
+          "message contains an MC or DOT number and onboarding language"
+        ]
+      },
+      "subject_ref": "carrier_mc_or_dot"
+    },
+    {
+      "workflow": "document-intake",
+      "agent": "billing-exception-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox"],
+        "any_of": [
+          "attachment is a BOL, POD, signed delivery receipt, lumper receipt, or scale ticket",
+          "body references documents for a specific order number"
+        ]
+      },
+      "subject_ref": "order_number_if_present"
+    },
+    {
+      "workflow": "billing-exception",
+      "agent": "billing-exception-handler",
+      "autonomy": "draft",
+      "match": {
+        "sources": ["ops-mailbox", "mcleod-tms"],
+        "any_of": [
+          "message is an invoice, short pay, billing dispute, or AP/AR question",
+          "carrier rate on the invoice differs from the McLeod rate on the order",
+          "mcleod order is delivered but unbilled past the SLA window"
+        ]
+      },
+      "subject_ref": "order_or_invoice_number"
+    },
+    {
+      "workflow": "exception-claims",
+      "agent": null,
+      "autonomy": "observe",
+      "_comment": "Deliberately unassigned. OS&D, cargo damage, injury, and legal threats are escalated to a human every time, never handled by an agent.",
+      "match": {
+        "sources": ["ops-mailbox", "mcleod-tms"],
+        "any_of": [
+          "message mentions damage, shortage, overage, rejected freight, accident, injury, or a claim",
+          "message contains legal or escalation language"
+        ]
+      },
+      "escalate": true
+    },
+    {
+      "workflow": "rate-quote",
+      "agent": null,
+      "autonomy": "observe",
+      "_comment": "No handler yet. The watcher will propose building one via workflow-agent-builder once this pattern recurs.",
+      "match": {
+        "sources": ["ops-mailbox"],
+        "any_of": ["message asks for a spot quote or rate on a lane"]
+      },
+      "subject_ref": "lane"
+    }
+  ],
+  "unmatched": {
+    "action": "collect",
+    "_comment": "Unmatched events are logged to the ledger as workflow 'unrouted' and reported in the cycle summary. When the same shape recurs at or above build_threshold, the watcher proposes a new workflow agent.",
+    "build_threshold": 3
+  }
+}
