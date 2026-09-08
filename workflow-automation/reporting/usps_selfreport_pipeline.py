@@ -347,6 +347,13 @@ def _raw_col_letters(raw_header):
     return (find("lane") or "E", find("otp") or "H", find("disp") or "K", find("otd") or "N")
 
 
+# Document properties written into the workbook, shown in Excel's File > Info / Properties
+# panel. Title, Subject and Tags (keywords) all carry the report name; Company is the end
+# customer. These are fixed for this report and do not depend on the data month.
+_DOC_TITLE   = "0029H Self Report - Delta Group Logistics"   # -> Title, Subject, Tags
+_DOC_COMPANY = "U.S. Postal Service"                          # -> Company
+
+
 def build_workbook_xlsx(out_path, report, rows, raw_table, program):
     """Standalone 3-tab workbook (stdlib only): Overview by Lane, Overview by Trip,
     Raw Data — with live COUNTIF/COUNTIFS formulas over the raw tab, cached values, and
@@ -482,17 +489,46 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         '<Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
         "</Types>"
     )
     root_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+        '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
         "</Relationships>"
+    )
+    # docProps/core.xml -> Title, Subject, Tags(keywords); docProps/app.xml -> Company.
+    core_props = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties '
+        'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:dcterms="http://purl.org/dc/terms/" '
+        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        f'<dc:title>{_xml_escape(_DOC_TITLE)}</dc:title>'
+        f'<dc:subject>{_xml_escape(_DOC_TITLE)}</dc:subject>'
+        f'<cp:keywords>{_xml_escape(_DOC_TITLE)}</cp:keywords>'
+        '</cp:coreProperties>'
+    )
+    app_props = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties '
+        'xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
+        'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        '<Application>Microsoft Excel</Application>'
+        f'<Company>{_xml_escape(_DOC_COMPANY)}</Company>'
+        '</Properties>'
     )
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", content_types)
         z.writestr("_rels/.rels", root_rels)
+        z.writestr("docProps/core.xml", core_props)
+        z.writestr("docProps/app.xml", app_props)
         z.writestr("xl/workbook.xml", workbook_xml)
         z.writestr("xl/_rels/workbook.xml.rels", wb_rels)
         z.writestr("xl/styles.xml", _STYLES_XML)

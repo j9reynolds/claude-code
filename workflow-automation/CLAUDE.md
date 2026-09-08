@@ -103,7 +103,7 @@ Delta network with DB02 access + OCR binaries.
 
 #6 RECURRING REPORTS — BUILT the real USPS report (`reporting/`).
 THE USPS "MONTHLY REPORT" IS an INTERNAL/PARTNER report to J.B. Hunt, tender 0029H — a
-macro `.xlsb` template titled "J.B. Hunt Transport GEGW Performance Overview", NOT a
+macro `.xlsb` template whose Overview tabs read "RTH Performance Overview", NOT a
 customer-facing narrative. File: `0029H Self Report - Delta Group Logistics - <Month>.xlsb`
 (SharePoint `…/USPS/` + K.Cash OneDrive). Emailed by J.Reynolds → K.Cash, CC S.Ivankovic &
 P.Drzewiecki, ~1st of month for prior month. Columns: Lane | Load Count | OTP | OT Dispatch |
@@ -164,9 +164,13 @@ path. Guarded like email: blank/unreachable => logs + continues (file still in o
 OUTPUT FILENAME is canonical & single-sourced: report_filename(month) -> "0029H Self Report -
 Delta Group Logistics - <Mon YYYY>.xlsx" (only Mon/YYYY changes = the DATA month). Pipeline's
 4th CLI arg accepts a FOLDER (auto-names) or an explicit .xlsx; run_monthly.ps1 passes the folder.
-Tests 11+10. (Template's by-Lane title literally reads "RTH Performance
-Overview (by Lane)" even on USPS/GEGW — I generate "{program} Performance Overview (by Lane)";
-program arg controls it — open Q whether to hardcode RTH.) Read the template colors via: decode
+Tests 12+10. (Overview tab titles are HARDCODED "RTH Performance Overview (by Lane)"/"(by
+TripID)" per Justin; the `program` arg is vestigial. DOC PROPERTIES written into every
+workbook: Title/Subject/Tags = "0029H Self Report - Delta Group Logistics", Company =
+"U.S. Postal Service" via docProps/core.xml + app.xml. NOTE: a USPS-internal program code
+(the four-letter tag the USPS rep left in the original template's title + file metadata) was
+leaked to Delta and PURGED from the whole project per Justin — never reintroduce that or any
+USPS-internal book code into the workbook, its docProps, docs, or filenames.) Read the template colors via: decode
 share token→GUID, read sheetNNN.htm (has class names only), colors are in linked stylesheet.css
 which the connector BLOCKS (text/css not allowed) and can't copy (Files.ReadWrite not granted) —
 so Justin supplied hexes manually. .mht won't convert (406).
@@ -196,8 +200,7 @@ true mine-vs-theirs per-lane diff still needs the Aug raw JBH extract.
 'application/vnd.ms-excel.sheet.binary.macroenabled.12' (allow-list has .xls/.xlsx only).
 Re-save as .xlsx to read cells (that's how May was read). OneDrive read path works: get_me →
 drive:///users/me → file:///{driveId}/{itemId}; big reads spill to a tool-results txt.
-OPEN: automate where the monthly JBH raw extract comes from (portal/email/EDI); program label
-per book (sample was RTH; USPS/JBH GEGW book = GEGW). Also BUILT a reusable generic monthly customer-performance report
+OPEN: automate where the monthly JBH raw extract comes from (portal/email/EDI). Also BUILT a reusable generic monthly customer-performance report
 (`report_customer_monthly.py` + `.sql`, DGLIQ DGL_TMS.tms) — keep, it's a different artifact.
 GATED: email/attach delivery needs Microsoft 365 re-auth (disconnected). Account-health report
 is already in flight internally (Command Center PR #12) — reuse, don't duplicate.

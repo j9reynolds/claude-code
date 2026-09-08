@@ -1,4 +1,4 @@
-"""USPS GEGW "Self Report" — generator (opportunity #6, recurring reports).
+"""USPS "Self Report" — generator (opportunity #6, recurring reports).
 
 Reproduces the monthly report Delta files to J.B. Hunt for the USPS surface network
 (tender 0029H), the workbook titled "<Program> Performance Overview" (Overview Summary
@@ -133,7 +133,7 @@ class _Lane:
         }
 
 
-def build_report(raw_csv, month, program="GEGW"):
+def build_report(raw_csv, month, program="RTH"):
     """month = 'YYYY-MM' (header only). Returns {title, month, lanes, totals, ...}."""
     lanes = OrderedDict()
     with open(raw_csv, encoding="utf-8-sig") as fh:
@@ -209,5 +209,5 @@ if __name__ == "__main__":
     if len(sys.argv) not in (3, 4):
         print(__doc__)
         sys.exit(1)
-    prog = sys.argv[3] if len(sys.argv) == 4 else "GEGW"
+    prog = sys.argv[3] if len(sys.argv) == 4 else "RTH"
     print(render_text(build_report(sys.argv[1], sys.argv[2], prog)))

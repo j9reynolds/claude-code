@@ -7,7 +7,7 @@
 
    Flow:
        run in SSMS (McLeod LME) -> export grid to CSV/TSV
-       -> python3 usps_selfreport_pipeline.py <export>  <YYYY-MM>  GEGW  OUT_overview.xlsx
+       -> python3 usps_selfreport_pipeline.py <export>  <YYYY-MM>  RTH  OUT_overview.xlsx
 
    Scope: customer UNITMETN, ordered_date in the prior calendar month, status D/V,
    id NOT LIKE '%S%'. O/D PAIR = pu.city, ST | del.city, ST.

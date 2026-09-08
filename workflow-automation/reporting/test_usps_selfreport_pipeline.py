@@ -105,7 +105,7 @@ def test_full_run_xlsx_in_xlsx_out_matches_generator():
     ])
     out = _tmp(".xlsx")
     try:
-        report, meta = P.run(raw, "2026-08", "GEGW", out)
+        report, meta = P.run(raw, "2026-08", "RTH", out)
         # read the written Overview back with our own reader
         sheets = P.read_xlsx_sheets(out)
         grid = next(iter(sheets.values()))
@@ -127,7 +127,7 @@ def test_full_run_xlsx_in_xlsx_out_matches_generator():
 
 def test_workbook_xlsx_has_three_sheets_and_expected_parts():
     rep = {
-        "title": "GEGW Performance Overview", "month": "2026-08", "lane_count": 1,
+        "title": "RTH Performance Overview", "month": "2026-08", "lane_count": 1,
         "lanes": [{"lane": "A, X | B, Y", "load_count": 3, "otp_pct": 67,
                    "ot_dispatch_pct": 100, "otd_pct": 33,
                    "otp_yes": 2, "ot_dispatch_yes": 3, "otd_yes": 1, "comments": "note"}],
@@ -140,7 +140,7 @@ def test_workbook_xlsx_has_three_sheets_and_expected_parts():
                       "ON TIME DELIVERY y/n"], "rows": [["A, X | B, Y", "Y", "Y", "N"]]}
     out = _tmp(".xlsx")
     try:
-        P.build_workbook_xlsx(out, rep, rows, raw, "GEGW")
+        P.build_workbook_xlsx(out, rep, rows, raw, "RTH")
         with zipfile.ZipFile(out) as z:
             names = set(z.namelist())
         for part in ("[Content_Types].xml", "_rels/.rels", "xl/workbook.xml",
@@ -181,7 +181,7 @@ def test_sql_export_layout_prefers_yn_over_numeric_flags():
         w.writerow(hdr)
         w.writerows(rows)
     try:
-        report, meta = P.run(path, "2026-08", "GEGW", _tmp(".xlsx"))
+        report, meta = P.run(path, "2026-08", "RTH", _tmp(".xlsx"))
     finally:
         os.remove(path)
     by = {l["lane"]: l for l in report["lanes"]}
@@ -200,7 +200,7 @@ def test_numeric_flag_only_export():
         w.writerow(["O/D PAIR", "OTP_Flag", "Dispatch_Flag", "OTD_Flag"])
         w.writerow(["A, X | B, Y", "1", "0", "1"])
     try:
-        report, _ = P.run(path, "2026-08", "GEGW", _tmp(".xlsx"))
+        report, _ = P.run(path, "2026-08", "RTH", _tmp(".xlsx"))
     finally:
         os.remove(path)
     l = report["lanes"][0]
@@ -217,7 +217,7 @@ def test_formatting_merge_freeze_and_yhighlight():
         w.writerow(["A, X | B, Y", "Y", "N", "Y"])          # 1 N cell, 2 non-N cells
     out = _tmp(".xlsx")
     try:
-        P.run(path, "2026-08", "GEGW", out)
+        P.run(path, "2026-08", "RTH", out)
         z = zipfile.ZipFile(out)
         s1 = z.read("xl/worksheets/sheet1.xml").decode()
         s2 = z.read("xl/worksheets/sheet2.xml").decode()
@@ -236,6 +236,32 @@ def test_formatting_merge_freeze_and_yhighlight():
 def test_report_filename_canonical():
     assert P.report_filename("2026-03") == "0029H Self Report - Delta Group Logistics - Mar 2026.xlsx"
     assert P.report_filename("2026-08") == "0029H Self Report - Delta Group Logistics - Aug 2026.xlsx"
+
+
+def test_workbook_document_properties():
+    """Title/Subject/Tags carry the report name; Company is the end customer."""
+    path = _tmp(".csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["O/D PAIR", "ON TIME Arrival Y/N", "Dispatch on time Y/N", "ON TIME DELIVERY y/n"])
+        w.writerow(["A, X | B, Y", "Y", "N", "Y"])
+    out = _tmp(".xlsx")
+    try:
+        P.run(path, "2026-08", "RTH", out)
+        with zipfile.ZipFile(out) as z:
+            names = set(z.namelist())
+            core = z.read("docProps/core.xml").decode()
+            app = z.read("docProps/app.xml").decode()
+        assert {"docProps/core.xml", "docProps/app.xml"} <= names
+        name = "0029H Self Report - Delta Group Logistics"
+        assert f"<dc:title>{name}</dc:title>" in core
+        assert f"<dc:subject>{name}</dc:subject>" in core
+        assert f"<cp:keywords>{name}</cp:keywords>" in core
+        assert "<Company>U.S. Postal Service</Company>" in app
+    finally:
+        for p in (path, out, out + ".rawrows.csv"):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 def test_run_into_folder_auto_names_by_data_month():

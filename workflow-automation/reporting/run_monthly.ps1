@@ -1,6 +1,6 @@
 <#
 =====================================================================================
- USPS GEGW Self Report - monthly runner   (extract -> generator -> styled workbook)
+ USPS Self Report - monthly runner   (extract -> generator -> styled workbook)
 -------------------------------------------------------------------------------------
  Runs on the Delta network (a host that can reach McLeod DB02 and has Python 3 + the
  SqlServer PowerShell module). One scheduled run per month produces the filled,
@@ -96,8 +96,8 @@ if (-not (Test-Path $outXlsx)) { throw "expected workbook not found: $outXlsx (s
 #    (e.g. M365/Outlook not configured on this host), log a warning and continue - the file is
 #    still produced for manual send, and the next run emails automatically once mail works.
 if ($MailMethod -ne "None") {
-  $subject = "USPS GEGW Self Report - $monLabel"
-  $body    = "Automated USPS GEGW Self Report for $monLabel is attached (0029H). " +
+  $subject = "USPS Self Report - $monLabel"
+  $body    = "Automated USPS Self Report for $monLabel is attached (0029H). " +
              "Please review before forwarding to J.B. Hunt. Generated $((Get-Date).ToString('g'))."
   try {
     if ($MailMethod -eq "Outlook") {

@@ -6,10 +6,10 @@ only, no money movement; the only outbound action is an email/attachment the sen
 
 ## Status
 
-- **BUILT — USPS GEGW "Self Report" (the real one Justin files monthly).** Generator
+- **BUILT — USPS "Self Report" (the real one Justin files monthly).** Generator
   (`report_usps_self_report.py`, 10/10 tests) + production query
-  (`report_usps_self_report.sql`). Reproduces the `.xlsb` template titled
-  **"J.B. Hunt Transport GEGW Performance Overview"** exactly:
+  (`report_usps_self_report.sql`). Reproduces the `.xlsb` template's
+  **"RTH Performance Overview"** tabs exactly:
   **Lane | Load Count | OTP | OT Dispatch | OTD | Comments**, one row per lane + a TOTAL,
   each metric a single **%**. Built from **Delta's McLeod LME extract query**
   (`usps_selfreport_extract.sql`), self-reported to J.B. Hunt (see below). **Verified to
@@ -82,7 +82,7 @@ mapped/UNC path to it. It is **guarded** like email: if the folder is unset (bla
 unreachable, it logs a warning and continues (the file still lands in `output\`).
 
 ```
-python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx
+python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 RTH OUT_overview.xlsx
 python3 usps_selfreport_pipeline.py RAW.csv  2026-05 RTH  OUT_overview.xlsx
 ```
 
@@ -97,7 +97,7 @@ before the first real send.
 | Attribute | Value |
 |-----------|-------|
 | File today | `0029H Self Report - Delta Group Logistics - <Month YYYY>.xlsb` (macro-enabled Excel) |
-| Template title | "J.B. Hunt Transport GEGW Performance Overview" |
+| Overview tab titles | "RTH Performance Overview (by Lane)" / "(by TripID)" |
 | Tender | 0029H |
 | Audience | **Internal → J.B. Hunt.** Emailed by J.Reynolds to K.Cash, CC S.Ivankovic & P.Drzewiecki, ~1st of the month for the prior month |
 | Home | SharePoint `…/USPS/` (and a working copy in K.Cash's OneDrive) |
@@ -170,7 +170,7 @@ final packaging stays a human/gated step and has two options:
 
 | Report | Cadence | Audience | Delivery | Status |
 |--------|---------|----------|----------|--------|
-| **USPS GEGW Self Report (0029H)** | Monthly | **Internal → J.B. Hunt** (K.Cash; CC S.Ivankovic, P.Drzewiecki) | Fill `.xlsb`/`.xlsx` rows → owner reviews → send | **Built** |
+| **USPS Self Report (0029H)** | Monthly | **Internal → J.B. Hunt** (K.Cash; CC S.Ivankovic, P.Drzewiecki) | Fill `.xlsb`/`.xlsx` rows → owner reviews → send | **Built** |
 | Monthly customer performance (any customer) | Monthly | Customer contact | Draft → sender approves → send | Built |
 | Per-salesperson account health | Weekly | Sales reps | Internal auto-send | In flight internally (Command Center PR #12) — don't duplicate; reuse |
 | Weekly carrier scorecard (on-time, tracking, rate-con compliance) | Weekly | Carrier-sales mgmt | Internal auto-send | Spec / future |
@@ -234,8 +234,8 @@ final packaging stays a human/gated step and has two options:
 - **Reason codes stay human.** The `Comments` / reason columns are judgement (e.g. "POSTAL",
   "Carrier", "Trailer issue") — the generator carries through whatever is supplied; it does
   not invent them.
-- **Confirm the program label** per book (the sample read was `RTH`; the USPS/JBH GEGW book is
-  `GEGW`) — passed as the third arg / `program=`.
+- **Program label** = `RTH` (matches the Overview tab titles) — passed as the third arg /
+  `program=`; the pipeline hardcodes the "RTH Performance Overview" tab titles regardless.
 - Re-save any `.xlsb` you want me to read as `.xlsx` (Graph cannot open `.xlsb`).
 - Re-authorize the **Microsoft 365** connector (drafting/attaching).
 - Stand the runner on the accessible host; decide the anomaly-hold thresholds.
