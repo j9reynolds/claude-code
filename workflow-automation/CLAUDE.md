@@ -127,6 +127,16 @@ Aug export (129 rows, pulled Sep 8) ran through pipeline OK → 20 lanes; note t
 report had 97 loads (pulled ~Sep 1, fewer Sept-delivered loads), so export≠filed dataset, and
 NEWID() means no run byte-matches another — a true mine==filed diff needs the exact export
 behind the filed file. Pipeline extractor now sniffs tab/comma delimiter (.tsv/.txt/.csv).
+WRITER now builds a STANDALONE 3-TAB .xlsx (Justin chose "build from scratch"): "Overview
+Summary By Lane", "Overview Summary by Trip" (TripID list per lane via first-seen unique SV
+Trip IDs, "('a,'b,..)" format + Route/HCR col), "Raw Data With Reason Codes" (verbatim export).
+Overview tabs use live COUNTIF/COUNTIFS/AVERAGE formulas over the raw tab (col letters resolved
+from raw header, not hardcoded) with cached values + fullCalcOnLoad; styling via styles.xml
+(bold shaded headers fill FFD9E1F2, thin borders, numFmt 9 lane %/numFmt 10 total %, col widths).
+build_workbook_xlsx(out, report, rows, raw_table, program); extract_raw_rows now returns
+(rows, meta, raw_table) and rows carry sv_trip_id. _cx col is 1-based. Verified on Aug export:
+3 tabs, TripID lists match the real template (e.g. Champaign ('27D0A,'27482,'27F6D,'28044,'286AB)).
+Can't verify Excel opens w/o repair from sandbox (no Excel) — ask Justin to confirm. Tests 8+10.
 EXACT METHOD (generator matches workbook COUNTIF/COUNTIFS): Load Count = all rows incl VOID;
 OTP%/Dispatch%/OTD% = count(flag=="Y")/Load Count as ONE rounded % (report shows "89%", not
 counts) — a VOID row is in the denominator, never a Y, so it lowers the lane %; TOTAL row % =

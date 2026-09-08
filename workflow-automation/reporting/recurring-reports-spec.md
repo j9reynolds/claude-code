@@ -36,9 +36,12 @@ any Delta host with no installs:
    (preferring the `Y/N` text columns over the numeric `*_Flag` columns), and writes an audit
    CSV of exactly what it aggregated.
 2. **GENERATE** — `report_usps_self_report.build_report()` (the verified aggregation).
-3. **FILL** — `write_overview_xlsx()` writes a filled **Overview** `.xlsx` (Lane | Load Count
-   | OTP | OT Dispatch | OTD | Comments, per-lane A–Z + TOTAL), percentages as real Excel `%`
-   cells — ready for the owner to review and send.
+3. **FILL** — `build_workbook_xlsx()` writes a standalone **3-tab** `.xlsx` mirroring the filed
+   workbook: **Overview Summary By Lane**, **Overview Summary by Trip** (TripID list per lane +
+   Route/HCR), and **Raw Data With Reason Codes** (verbatim export). The two Overview tabs use
+   live `COUNTIF/COUNTIFS/AVERAGE` formulas over the raw tab (cached values + `fullCalcOnLoad`)
+   so they recompute if raw data is edited, with formatting (bold shaded headers, thin borders,
+   `%` number formats, column widths, bold totals). Open once in Excel to confirm before sending.
 
 ```
 python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx

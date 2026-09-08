@@ -86,13 +86,15 @@ def test_extract_from_xlsx_raw_tab():
         _raw_row("ATLANTA, GA | AUGUSTA, GA", "Y", "Y", "Order is VOID"),
     ])
     try:
-        rows, meta = P.extract_raw_rows(path)
+        rows, meta, raw = P.extract_raw_rows(path)
     finally:
         os.remove(path)
     assert meta["source"] == "xlsx" and meta["count"] == 3
     assert rows[0]["lane"] == "CINCINNATI, OH | DENVER, CO"
     assert rows[0]["otp_flag"] == "Y" and rows[0]["otd_flag"] == "N"
     assert rows[0]["reason1"] == "POSTAL"
+    assert rows[0]["sv_trip_id"] == "T1"                 # captured for the by-Trip tab
+    assert raw["header"] == JBH_HEADER and len(raw["rows"]) == 3   # verbatim raw table
 
 
 def test_full_run_xlsx_in_xlsx_out_matches_generator():
@@ -123,22 +125,36 @@ def test_full_run_xlsx_in_xlsx_out_matches_generator():
                 os.remove(p)
 
 
-def test_overview_xlsx_is_valid_zip_with_expected_parts():
+def test_workbook_xlsx_has_three_sheets_and_expected_parts():
     rep = {
         "title": "GEGW Performance Overview", "month": "2026-08", "lane_count": 1,
         "lanes": [{"lane": "A, X | B, Y", "load_count": 3, "otp_pct": 67,
-                   "ot_dispatch_pct": 100, "otd_pct": 33, "comments": "note"}],
+                   "ot_dispatch_pct": 100, "otd_pct": 33,
+                   "otp_yes": 2, "ot_dispatch_yes": 3, "otd_yes": 1, "comments": "note"}],
         "totals": {"lane": "TOTAL", "load_count": 3, "otp_pct": 67,
                    "ot_dispatch_pct": 100, "otd_pct": 33, "comments": ""},
     }
+    rows = [{"lane": "A, X | B, Y", "sv_trip_id": "'T1", "otp_flag": "Y",
+             "dispatch_flag": "Y", "otd_flag": "N", "reason1": "", "load_id": "'L1"}]
+    raw = {"header": ["O/D PAIR", "ON TIME Arrival Y/N", "Dispatch on time Y/N",
+                      "ON TIME DELIVERY y/n"], "rows": [["A, X | B, Y", "Y", "Y", "N"]]}
     out = _tmp(".xlsx")
     try:
-        P.write_overview_xlsx(rep, out)
+        P.build_workbook_xlsx(out, rep, rows, raw, "GEGW")
         with zipfile.ZipFile(out) as z:
             names = set(z.namelist())
         for part in ("[Content_Types].xml", "_rels/.rels", "xl/workbook.xml",
-                     "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/worksheets/sheet1.xml"):
+                     "xl/_rels/workbook.xml.rels", "xl/styles.xml",
+                     "xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml",
+                     "xl/worksheets/sheet3.xml"):
             assert part in names, part
+        s = P.read_xlsx_sheets(out)
+        assert list(s) == ["Overview Summary By Lane", "Overview Summary by Trip",
+                           "Raw Data With Reason Codes"]
+        # by-Trip TripID cell carries the trip list; raw tab is verbatim
+        trip = s["Overview Summary by Trip"]
+        assert trip[2][0] == "('T1)" and trip[2][1] == "A, X | B, Y"
+        assert s["Raw Data With Reason Codes"][0] == raw["header"]
     finally:
         os.remove(out)
 
@@ -198,10 +214,11 @@ def test_extract_from_csv():
         w.writerow(["lane", "otp_flag", "dispatch_flag", "otd_flag"])
         w.writerow(["A, X | B, Y", "Y", "N", "Y"])
     try:
-        rows, meta = P.extract_raw_rows(path)
+        rows, meta, raw = P.extract_raw_rows(path)
     finally:
         os.remove(path)
     assert meta["source"] == "csv" and len(rows) == 1 and rows[0]["dispatch_flag"] == "N"
+    assert raw["header"] == ["lane", "otp_flag", "dispatch_flag", "otd_flag"]
 
 
 if __name__ == "__main__":

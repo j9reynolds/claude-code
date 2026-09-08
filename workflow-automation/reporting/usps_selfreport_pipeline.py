@@ -8,9 +8,14 @@ with no installs — pip is not required):
                tabs) and pull the normalized per-load rows. Also accepts a .csv.
   2. GENERATE  run report_usps_self_report.build_report() — the verified aggregation
                (reproduced the real May 2026 report exactly, 27/27 lanes, 0 differences).
-  3. FILL      write a filled **Overview** .xlsx: Lane | Load Count | OTP | OT Dispatch |
-               OTD | Comments, one row per lane (A-Z) + a TOTAL row, percentages formatted
-               as Excel % cells — ready for the account owner to review and send.
+  3. FILL      write a standalone 3-tab **.xlsx** mirroring the filed workbook:
+                 * "Overview Summary By Lane"  — Lane | Load Count | OTP | OT Dispatch | OTD | Comments
+                 * "Overview Summary by Trip"  — TripID | Lane | Load Count | OTP | OT Dispatch | OTD | Route/HCR
+                 * "Raw Data With Reason Codes" — the verbatim per-load export
+               The two Overview tabs use live COUNTIF/COUNTIFS/AVERAGE formulas over the raw
+               tab (cached values + fullCalcOnLoad), so they recompute if the raw data is
+               edited — with formatting (bold shaded headers, thin borders, % number formats,
+               column widths, bold totals). Open once in Excel to confirm before sending.
 
 .xlsx here is read and written as zipped XML with the stdlib (zipfile + xml). It targets the
 common shapes Excel produces (shared strings, inline strings, plain numbers). Open the
@@ -122,6 +127,7 @@ _ALIAS = {
     "disp": ("dispatch on time y/n", "ot dispatch y/n", "dispatch_flag"),
     "otd": ("on time delivery y/n", "ot delivery y/n", "otd_flag"),
     "load_id": ("load id", "load_id"),
+    "trip": ("sv trip id", "tripid", "trip id", "sv trip"),
 }
 
 
@@ -151,22 +157,27 @@ def extract_raw_rows(path):
             cmap = {k: pick(k) for k in _ALIAS}
             reason_keys = [f for f in fields if _is_reason(f)]
             rows = []
+            raw_rows = []                     # verbatim, for the Raw Data tab
             for r in rd:
                 lane = (r.get(cmap["lane"] or "", "") or "").strip()
                 if not lane:
                     continue
                 rows.append({
                     "lane": lane,
+                    "sv_trip_id": r.get(cmap["trip"] or "", ""),
                     "otp_flag": r.get(cmap["otp"] or "", ""),
                     "dispatch_flag": r.get(cmap["disp"] or "", ""),
                     "otd_flag": r.get(cmap["otd"] or "", ""),
                     "reason1": "; ".join(x for x in (r.get(k, "") for k in reason_keys) if str(x).strip()),
                     "load_id": r.get(cmap["load_id"] or "", ""),
                 })
-        return rows, {"source": "csv", "sheets": [], "count": len(rows)}
+                raw_rows.append([r.get(f, "") for f in fields])
+        return (rows, {"source": "csv", "sheets": [], "count": len(rows)},
+                {"header": fields, "rows": raw_rows})
 
     sheets = read_xlsx_sheets(path)
     out, used = [], []
+    raw_header, raw_rows = [], []             # verbatim, for the Raw Data tab
     for name, grid in sheets.items():
         # find the header row containing O/D PAIR
         hdr_i = next((i for i, row in enumerate(grid)
@@ -186,10 +197,13 @@ def extract_raw_rows(path):
         c_otp = col("otp")
         c_disp = col("disp")
         c_otd = col("otd")
+        c_trip = col("trip")
         reason_cols = [i for i, h in enumerate(low) if _is_reason(h)]
         c_load = col("load_id")
         if c_lane is None:
             continue
+        if not raw_header:
+            raw_header = header
         n_before = len(out)
         for row in grid[hdr_i + 1:]:
             lane = (row[c_lane] if c_lane < len(row) else "").strip()
@@ -198,12 +212,15 @@ def extract_raw_rows(path):
             g = lambda i: (row[i] if (i is not None and i < len(row)) else "")
             out.append({
                 "lane": lane,
+                "sv_trip_id": g(c_trip),
                 "otp_flag": g(c_otp), "dispatch_flag": g(c_disp), "otd_flag": g(c_otd),
                 "reason1": "; ".join(x for x in (g(i) for i in reason_cols) if str(x).strip()),
                 "load_id": g(c_load),
             })
+            raw_rows.append([(row[i] if i < len(row) else "") for i in range(len(raw_header))])
         used.append({"sheet": name, "rows": len(out) - n_before})
-    return out, {"source": "xlsx", "sheets": used, "count": len(out)}
+    return (out, {"source": "xlsx", "sheets": used, "count": len(out)},
+            {"header": raw_header, "rows": raw_rows})
 
 
 # --------------------------------------------------------------------------- write .xlsx
@@ -221,76 +238,182 @@ def _col_letter(idx):
     return s
 
 
-def write_overview_xlsx(report, out_path, sheet_name="Overview Summary By Lane"):
-    """Write the filled Overview as a minimal, valid .xlsx (stdlib only).
-    Percent cells use builtin number format 9 ('0%'); values stored as fractions."""
-    header = ["Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Comments"]
-    body = []
-    for l in report["lanes"] + [report["totals"]]:
-        body.append([
-            l["lane"], l["load_count"],
-            (None if l["otp_pct"] is None else l["otp_pct"] / 100.0),
-            (None if l["ot_dispatch_pct"] is None else l["ot_dispatch_pct"] / 100.0),
-            (None if l["otd_pct"] is None else l["otd_pct"] / 100.0),
-            l.get("comments", ""),
-        ])
-    title = f"{report['title']} — {report['month']}"
+RAW_SHEET = "Raw Data With Reason Codes"     # the Overview/by-Trip formulas reference this
 
-    def cell_xml(r, ci, val, is_pct=False, bold_num=False):
-        ref = f"{_col_letter(ci)}{r}"
-        if val is None or val == "":
-            return f'<c r="{ref}"/>'
-        if isinstance(val, (int, float)) and not isinstance(val, bool):
-            style = ' s="1"' if is_pct else ""
-            return f'<c r="{ref}"{style}><v>{val}</v></c>'
-        return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{_xml_escape(val)}</t></is></c>'
+# style indices (see _STYLES_XML): 0 default, 1 title, 2 header, 3 data, 4 data%,
+# 5 total, 6 total%, 7 raw-data text
+_STYLES_XML = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    '<fonts count="2">'
+    '<font><sz val="11"/><name val="Calibri"/></font>'
+    '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+    '<fills count="3">'
+    '<fill><patternFill patternType="none"/></fill>'
+    '<fill><patternFill patternType="gray125"/></fill>'
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFD9E1F2"/><bgColor indexed="64"/></patternFill></fill>'
+    '</fills>'
+    '<borders count="2"><border/>'
+    '<border><left style="thin"><color rgb="FFBFBFBF"/></left><right style="thin"><color rgb="FFBFBFBF"/></right>'
+    '<top style="thin"><color rgb="FFBFBFBF"/></top><bottom style="thin"><color rgb="FFBFBFBF"/></bottom><diagonal/></border></borders>'
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    '<cellXfs count="8">'
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                   # 0
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'                                      # 1 title
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 2 header
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'                                    # 3 data
+    '<xf numFmtId="9" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'              # 4 data %
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                      # 5 total
+    '<xf numFmtId="10" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>'  # 6 total %
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                    # 7 raw text
+    '</cellXfs></styleSheet>'
+)
 
-    rows_xml = []
-    # row 1: title
-    rows_xml.append(f'<row r="1">{cell_xml(1, 0, title)}</row>')
-    # row 2: header
-    rows_xml.append('<row r="2">' + "".join(cell_xml(2, i, h) for i, h in enumerate(header)) + "</row>")
-    # data rows from row 3
-    for ri, rvals in enumerate(body, start=3):
-        cells = [
-            cell_xml(ri, 0, rvals[0]),
-            cell_xml(ri, 1, rvals[1]),
-            cell_xml(ri, 2, rvals[2], is_pct=True),
-            cell_xml(ri, 3, rvals[3], is_pct=True),
-            cell_xml(ri, 4, rvals[4], is_pct=True),
-            cell_xml(ri, 5, rvals[5]),
+
+def _cx(col, row, *, s=0, v=None, f=None, text=None):
+    """Emit one <c>. col is 1-based. f=formula (+ optional cached v), text=inline string, v=number."""
+    ref = f"{_col_letter(col - 1)}{row}"
+    sa = f' s="{s}"' if s else ""
+    if f is not None:
+        cached = "" if v is None else f"<v>{v}</v>"
+        return f'<c r="{ref}"{sa}><f>{_xml_escape(f)}</f>{cached}</c>'
+    if text is not None and text != "":
+        return f'<c r="{ref}"{sa} t="inlineStr"><is><t xml:space="preserve">{_xml_escape(text)}</t></is></c>'
+    if v is not None:
+        return f'<c r="{ref}"{sa}><v>{v}</v></c>'
+    return f'<c r="{ref}"{sa}/>'
+
+
+def _sheet_xml(rows_xml, cols_xml=""):
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            + cols_xml + "<sheetData>" + "".join(rows_xml) + "</sheetData></worksheet>")
+
+
+def _cols_xml(widths):
+    parts = "".join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>'
+                    for i, w in enumerate(widths, start=1))
+    return f"<cols>{parts}</cols>"
+
+
+def _raw_col_letters(raw_header):
+    """Locate lane/otp/disp/otd columns in the raw header -> spreadsheet column letters,
+    so the Overview formulas point at the right columns whatever the export order."""
+    low = [(h or "").strip().lower() for h in raw_header]
+
+    def find(field):
+        for a in _ALIAS[field]:
+            if a in low:
+                return _col_letter(low.index(a))
+        return None
+    return (find("lane") or "E", find("otp") or "H", find("disp") or "K", find("otd") or "N")
+
+
+def build_workbook_xlsx(out_path, report, rows, raw_table, program):
+    """Standalone 3-tab workbook (stdlib only): Overview by Lane, Overview by Trip,
+    Raw Data — with live COUNTIF/COUNTIFS formulas over the raw tab, cached values, and
+    formatting (bold headers, fill, borders, % number formats, column widths)."""
+    lanes = report["lanes"]
+    Lc, Hc, Kc, Nc = _raw_col_letters(raw_table.get("header") or [])
+    RS = f"'{RAW_SHEET}'"
+
+    # trip-id list per lane (unique, in first-seen order), formatted "('a,'b,...)"
+    trips = {}
+    for r in rows:
+        t = str(r.get("sv_trip_id", "")).strip()
+        if not t:
+            continue
+        trips.setdefault(r["lane"], [])
+        if t not in trips[r["lane"]]:
+            trips[r["lane"]].append(t)
+
+    def frac(l, k):
+        return (l[k] / l["load_count"]) if l["load_count"] else None
+
+    # ---- Sheet 1: Overview Summary By Lane ----
+    s1 = [f'<row r="1">{_cx(1, 1, s=1, text=program + " Performance Overview (by Lane)")}</row>']
+    hdr1 = ["Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Comments"]
+    s1.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr1)) + "</row>")
+    first = 3
+    for ri, l in enumerate(lanes, start=first):
+        A = f"A{ri}"
+        cif = f"COUNTIF({RS}!{Lc}:{Lc},{A})"
+        c = [
+            _cx(1, ri, s=3, text=l["lane"]),
+            _cx(2, ri, s=3, f=cif, v=l["load_count"]),
+            _cx(3, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{A},{RS}!{Hc}:{Hc},"Y")/{cif},"")', v=frac(l, "otp_yes")),
+            _cx(4, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{A},{RS}!{Kc}:{Kc},"Y")/{cif},"")', v=frac(l, "ot_dispatch_yes")),
+            _cx(5, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{A},{RS}!{Nc}:{Nc},"Y")/{cif},"")', v=frac(l, "otd_yes")),
+            _cx(6, ri, s=3, text=l.get("comments", "")),
         ]
-        rows_xml.append(f'<row r="{ri}">' + "".join(cells) + "</row>")
+        s1.append(f'<row r="{ri}">' + "".join(c) + "</row>")
+    last = first + len(lanes) - 1
+    tr = last + 1
+    mean = lambda k: (sum(frac(l, k) for l in lanes) / len(lanes)) if lanes else None
+    s1.append(f'<row r="{tr}">' + "".join([
+        _cx(1, tr, s=5, text="TOTAL"),
+        _cx(2, tr, s=5, f=f"SUM(B{first}:B{last})", v=report["totals"]["load_count"]),
+        _cx(3, tr, s=6, f=f"AVERAGE(C{first}:C{last})", v=mean("otp_yes")),
+        _cx(4, tr, s=6, f=f"AVERAGE(D{first}:D{last})", v=mean("ot_dispatch_yes")),
+        _cx(5, tr, s=6, f=f"AVERAGE(E{first}:E{last})", v=mean("otd_yes")),
+        _cx(6, tr, s=5),
+    ]) + "</row>")
+    sheet1 = _sheet_xml(s1, _cols_xml([34, 11, 8, 12, 8, 34]))
 
-    sheet_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        "<sheetData>" + "".join(rows_xml) + "</sheetData></worksheet>"
-    )
-    styles_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
-        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
-        '<borders count="1"><border/></borders>'
-        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-        '<cellXfs count="2">'
-        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
-        '<xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
-        "</cellXfs></styleSheet>"
-    )
+    # ---- Sheet 2: Overview Summary by Trip ----
+    s2 = [f'<row r="1">{_cx(1, 1, s=1, text=program + " Performance Overview (by TripID)")}</row>']
+    hdr2 = ["TripID", "Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Route/HCR"]
+    s2.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr2)) + "</row>")
+    for ri, l in enumerate(lanes, start=first):
+        B = f"B{ri}"
+        cif = f"COUNTIF({RS}!{Lc}:{Lc},{B})"
+        tlist = "(" + ",".join(trips.get(l["lane"], [])) + ")" if trips.get(l["lane"]) else ""
+        c = [
+            _cx(1, ri, s=3, text=tlist),
+            _cx(2, ri, s=3, text=l["lane"]),
+            _cx(3, ri, s=3, f=cif, v=l["load_count"]),
+            _cx(4, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{B},{RS}!{Hc}:{Hc},"Y")/{cif},"")', v=frac(l, "otp_yes")),
+            _cx(5, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{B},{RS}!{Kc}:{Kc},"Y")/{cif},"")', v=frac(l, "ot_dispatch_yes")),
+            _cx(6, ri, s=4, f=f'IFERROR(COUNTIFS({RS}!{Lc}:{Lc},{B},{RS}!{Nc}:{Nc},"Y")/{cif},"")', v=frac(l, "otd_yes")),
+            _cx(7, ri, s=3),
+        ]
+        s2.append(f'<row r="{ri}">' + "".join(c) + "</row>")
+    s2.append(f'<row r="{tr}">' + "".join([
+        _cx(1, tr, s=5, text="GRAND TOTALS"),
+        _cx(2, tr, s=5),
+        _cx(3, tr, s=5, f=f"SUM(C{first}:C{last})", v=report["totals"]["load_count"]),
+        _cx(4, tr, s=6, f=f"AVERAGE(D{first}:D{last})", v=mean("otp_yes")),
+        _cx(5, tr, s=6, f=f"AVERAGE(E{first}:E{last})", v=mean("ot_dispatch_yes")),
+        _cx(6, tr, s=6, f=f"AVERAGE(F{first}:F{last})", v=mean("otd_yes")),
+        _cx(7, tr, s=5),
+    ]) + "</row>")
+    sheet2 = _sheet_xml(s2, _cols_xml([26, 34, 11, 8, 12, 8, 12]))
+
+    # ---- Sheet 3: Raw Data With Reason Codes (verbatim export) ----
+    rh = raw_table.get("header") or ["lane", "otp_flag", "dispatch_flag", "otd_flag", "reason1", "load_id"]
+    s3 = ['<row r="1">' + "".join(_cx(i + 1, 1, s=2, text=h) for i, h in enumerate(rh)) + "</row>"]
+    for ri, rvals in enumerate(raw_table.get("rows") or [], start=2):
+        s3.append(f'<row r="{ri}">' + "".join(_cx(i + 1, ri, s=7, text=("" if v is None else str(v)))
+                                               for i, v in enumerate(rvals)) + "</row>")
+    sheet3 = _sheet_xml(s3, _cols_xml([16] * max(1, len(rh))))
+
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
         ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'<sheets><sheet name="{_xml_escape(sheet_name)[:31]}" sheetId="1" r:id="rId1"/></sheets>'
-        "</workbook>"
+        '<sheets>'
+        '<sheet name="Overview Summary By Lane" sheetId="1" r:id="rId1"/>'
+        '<sheet name="Overview Summary by Trip" sheetId="2" r:id="rId2"/>'
+        f'<sheet name="{_xml_escape(RAW_SHEET)[:31]}" sheetId="3" r:id="rId3"/>'
+        '</sheets><calcPr calcId="0" fullCalcOnLoad="1"/></workbook>'
     )
     wb_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+        '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>'
+        '<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
         "</Relationships>"
     )
     content_types = (
@@ -300,6 +423,8 @@ def write_overview_xlsx(report, out_path, sheet_name="Overview Summary By Lane")
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
         '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
         "</Types>"
     )
@@ -314,25 +439,28 @@ def write_overview_xlsx(report, out_path, sheet_name="Overview Summary By Lane")
         z.writestr("_rels/.rels", root_rels)
         z.writestr("xl/workbook.xml", workbook_xml)
         z.writestr("xl/_rels/workbook.xml.rels", wb_rels)
-        z.writestr("xl/styles.xml", styles_xml)
-        z.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        z.writestr("xl/styles.xml", _STYLES_XML)
+        z.writestr("xl/worksheets/sheet1.xml", sheet1)
+        z.writestr("xl/worksheets/sheet2.xml", sheet2)
+        z.writestr("xl/worksheets/sheet3.xml", sheet3)
     return out_path
 
 
 # --------------------------------------------------------------------------- run pipeline
 def run(raw_path, month, program, out_xlsx, raw_csv_out=None):
-    rows, meta = extract_raw_rows(raw_path)
+    rows, meta, raw_table = extract_raw_rows(raw_path)
     if not rows:
         raise SystemExit(f"No raw rows found in {raw_path} (need an 'O/D PAIR' column).")
     # write the normalized raw CSV (audit trail / generator input)
     tmp_csv = raw_csv_out or (out_xlsx + ".rawrows.csv")
     with open(tmp_csv, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["lane", "otp_flag", "dispatch_flag",
-                                           "otd_flag", "reason1", "load_id"])
+                                           "otd_flag", "reason1", "load_id"],
+                           extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
     report = R.build_report(tmp_csv, month, program=program)
-    write_overview_xlsx(report, out_xlsx)
+    build_workbook_xlsx(out_xlsx, report, rows, raw_table, program)
     return report, meta
 
 
@@ -345,4 +473,4 @@ if __name__ == "__main__":
     print(R.render_text(rep))
     print(f"\nextract: {meta['count']} raw rows from {meta['source']} "
           f"{[s['sheet'] + ':' + str(s['rows']) for s in meta['sheets']] or ''}")
-    print(f"filled Overview written: {out}")
+    print(f"workbook written (3 tabs: by Lane, by Trip, Raw Data): {out}")
