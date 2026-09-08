@@ -199,7 +199,7 @@ def render_text(rep) -> str:
     rows = [tuple(str(c) for c in r) for r in render_rows(rep)]
     w = [max(len(r[i]) for r in rows) for i in range(len(_HEADERS))]
     line = lambda r: "  ".join(c.ljust(w[i]) for i, c in enumerate(r))
-    out = [f"{rep['title']} — {rep['month']}  ({rep['lane_count']} lanes)",
+    out = [f"{rep['title']} - {rep['month']}  ({rep['lane_count']} lanes)",
            line(rows[0]), "  ".join("-" * x for x in w)]
     out.extend(line(r) for r in rows[1:])
     return "\n".join(out)
