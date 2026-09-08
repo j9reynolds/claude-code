@@ -334,8 +334,9 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         return (l[k] / l["load_count"]) if l["load_count"] else None
 
     # ---- Sheet 1: Overview Summary By Lane ----
-    t1 = _cx(1, 1, s=1, text=program + " Performance Overview (by Lane)") + "".join(
+    t1 = _cx(1, 1, s=1, text="RTH Performance Overview (by Lane)") + "".join(
         _cx(c, 1, s=1) for c in range(2, 7))            # black title bar across A1:F1
+    #                                                     ^ hardcoded verbatim to match the template
     s1 = [f'<row r="1">{t1}</row>']
     hdr1 = ["Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Comments"]
     s1.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr1)) + "</row>")
@@ -366,8 +367,9 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
     sheet1 = _sheet_xml(s1, _cols_xml([34, 11, 8, 12, 8, 34]))
 
     # ---- Sheet 2: Overview Summary by Trip ----
-    t2 = _cx(1, 1, s=1, text=program + " Performance Overview (by TripID)") + "".join(
+    t2 = _cx(1, 1, s=1, text="RTH Performance Overview (by TripID)") + "".join(
         _cx(c, 1, s=1) for c in range(2, 8))            # black title bar across A1:G1
+    #                                                     ^ hardcoded verbatim to match the template
     s2 = [f'<row r="1">{t2}</row>']
     hdr2 = ["TripID", "Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Route/HCR"]
     s2.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr2)) + "</row>")
