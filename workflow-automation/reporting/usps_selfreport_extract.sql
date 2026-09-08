@@ -1,37 +1,32 @@
 /* ============================================================================
-   USPS Self Report — RAW EXTRACT (the real one, run in SSMS against McLeod LME)
+   USPS Self Report — RAW EXTRACT  (the version actually in use, run in SSMS on McLeod LME)
    ----------------------------------------------------------------------------
-   This is the authoritative source for the Self Report's raw per-load rows. Run it
-   in SSMS, export the grid to CSV (or paste into the "… Raw Data With Reason Codes"
-   tab), then feed it to the pipeline:
+   Confirmed as the query behind the last two filed reports (May & August 2026): both
+   label voided orders "Order is VOID" in all three Y/N columns, which only this version
+   produces (an earlier variant used 'V'/'N'/'V').
 
-       python3 usps_selfreport_pipeline.py  <export>.csv  <YYYY-MM>  GEGW  OUT_overview.xlsx
+   Flow:
+       run in SSMS (McLeod LME) -> export grid to CSV/TSV
+       -> python3 usps_selfreport_pipeline.py <export>  <YYYY-MM>  GEGW  OUT_overview.xlsx
 
-   The pipeline reads these exact column headers (O/D PAIR, ON TIME Arrival Y/N,
-   Dispatch on time Y/N, ON TIME DELIVERY y/n, Load ID) and reproduces the Overview
-   (Load Count incl. VOID; metric % = count("Y")/loads; TOTAL = unweighted mean of
-   lane %s). Reason codes are added by hand after export (this query emits none).
+   Scope: customer UNITMETN, ordered_date in the prior calendar month, status D/V,
+   id NOT LIKE '%S%'. O/D PAIR = pu.city, ST | del.city, ST.
 
-   Scope (matches the report): customer UNITMETN, ordered_date in the prior calendar
-   month, status D or V, order id NOT LIKE '%S%' (excludes subject orders).
+   ⚠️ DATA-INTEGRITY CAVEAT — ALL THREE "actual" timestamps are RANDOMIZED and
+   NON-DETERMINISTIC. Each is the real McLeod value minus a random 55–67 minutes via
+   NEWID():
+       RandomArrival  = pu.actual_arrival  − rand(55–67m)   -> drives OTP
+       RandomDelivery = del.actual_arrival − rand(55–67m)   -> drives OTD
+       ROPH.Posted_Date = rate-con posted_date − rand(55–67m) -> drives Dispatch
+   Consequences: (a) every metric is computed against a time shifted ~1h EARLIER than
+   McLeod recorded, so OTP/OTD/Dispatch read systematically BETTER than actual;
+   (b) results CHANGE on every run and do not reconcile against McLeod on audit;
+   (c) Dispatch is ~100% by construction (actual is always before planned). For a number
+   self-certified to a partner (J.B. Hunt), consider computing on-time from the REAL
+   McLeod actual_arrival / actual_departure instead of a randomized value.
 
-   TWO THINGS TO REVIEW (flagged, not changed — logic left exactly as run):
-
-   1. DISPATCH "actual" is SYNTHETIC and NON-DETERMINISTIC. `actual dispatch time`
-      (ROPH.Posted_Date) = the rate-con posted_date MINUS a random 55–67 minutes
-      (DATEADD(MINUTE, -((ABS(CHECKSUM(NEWID())) % 13) + 55), oph.posted_date)).
-      Because the "actual" is always ~1h before the "planned", Dispatch_Flag is
-      effectively always on-time (≈100%), and NEWID() makes the value change on every
-      run. If JBH ever audits dispatch, "actual = planned − random hour" won't hold up.
-      If a real dispatch timestamp exists (e.g. movement actual departure), point the
-      dispatch comparison at it; otherwise this metric is not measuring performance.
-
-   2. The trailing `STRING_AGG(...) AS TripIDs` is an aggregate used alongside
-      non-aggregated columns with no GROUP BY — SQL Server rejects that (msg 8120).
-      The pipeline does not need it; drop that column for a clean per-load export.
+   Query preserved as run by Ops.
    ============================================================================ */
-
--- LAST MONTH extract, customer UNITMETN (USPS). Verbatim as run by Ops.
 
 DECLARE @PUDate_START DATE;
 DECLARE @PUDate_END   DATE;
@@ -51,7 +46,7 @@ SELECT
             WHEN LEN(x.cleaned_refno) - LEN(REPLACE(x.cleaned_refno, '/', '')) = 0 THEN LTRIM(RTRIM(x.cleaned_refno))
             WHEN LEN(x.cleaned_refno) - LEN(REPLACE(x.cleaned_refno, '/', '')) = 1 THEN LTRIM(RTRIM(SUBSTRING(x.cleaned_refno, CHARINDEX('/', x.cleaned_refno) + 1, LEN(x.cleaned_refno))))
             WHEN LEN(x.cleaned_refno) - LEN(REPLACE(x.cleaned_refno, '/', '')) >= 2 THEN LTRIM(RTRIM(SUBSTRING(x.cleaned_refno, CHARINDEX('/', x.cleaned_refno, CHARINDEX('/', x.cleaned_refno) + 1) + 1, LEN(x.cleaned_refno))))
-            ELSE 'Err'
+            ELSE 'Load ID Not Found'
         END) AS [SV Trip ID],
 
     CONCAT('''', COALESCE(LTRIM(RTRIM(o.[blnum])), '')) AS [Load ID],
@@ -60,78 +55,47 @@ SELECT
            ' | ',
            COALESCE(LTRIM(RTRIM(del.[city_name])), ''), ', ', COALESCE(LTRIM(RTRIM(del.[state])), '')) AS [O/D PAIR],
 
-    CASE WHEN pu.[sched_arrive_early] IS NOT NULL THEN pu.[sched_arrive_early] ELSE '' END AS [Scheduled arrival time],
-    pu.[actual_arrival] AS [Actual arrival time],
+    CASE WHEN pu.[sched_arrive_early] IS NOT NULL THEN FORMAT(pu.[sched_arrive_early], 'MM-dd-yyyy HH:mm') ELSE '' END AS [Scheduled arrival time],
+    FORMAT(R.RandomArrival, 'MM-dd-yyyy HH:mm') AS [Actual arrival time],       -- RANDOMIZED (see caveat)
 
     CASE
-        WHEN o.[status] = 'V' THEN 'V'
-        WHEN pu.[actual_arrival] IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Err'
-        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] > pu.[sched_arrive_early] THEN 'N'
-        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] = pu.[sched_arrive_early] THEN 'Y'
-        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] < pu.[sched_arrive_early] THEN 'Y'
-        WHEN pu.[actual_arrival] BETWEEN pu.[sched_arrive_early] AND pu.[sched_arrive_late] THEN 'Y'
-        WHEN pu.[actual_arrival] < pu.[sched_arrive_early] THEN 'Y'
-        WHEN pu.[actual_arrival] > pu.[sched_arrive_late] THEN 'N'
-        ELSE 'Err'
+        WHEN o.[status] = 'V' THEN 'Order is VOID'
+        WHEN R.RandomArrival IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Unknown'
+        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival > pu.[sched_arrive_early] THEN 'N'
+        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival = pu.[sched_arrive_early] THEN 'Y'
+        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival < pu.[sched_arrive_early] THEN 'Y'
+        WHEN R.RandomArrival BETWEEN pu.[sched_arrive_early] AND pu.[sched_arrive_late] THEN 'Y'
+        WHEN R.RandomArrival < pu.[sched_arrive_early] THEN 'Y'
+        WHEN R.RandomArrival > pu.[sched_arrive_late] THEN 'N'
+        ELSE 'Unknown'
     END AS [ON TIME Arrival Y/N],
 
-    ROPH.Posted_Date AS [actual dispatch time],                                   -- SYNTHETIC (see header note 1)
-    CASE WHEN oph.[posted_date] IS NOT NULL THEN oph.[posted_date] ELSE '' END AS [planned dispatch time],
+    FORMAT(ROPH.Posted_Date, 'MM-dd-yyyy HH:mm') AS [actual dispatch time],      -- RANDOMIZED (see caveat)
+    CASE WHEN oph.[posted_date] IS NOT NULL THEN FORMAT(oph.[posted_date], 'MM-dd-yyyy HH:mm') ELSE '' END AS [planned dispatch time],
 
     CASE
-        WHEN o.[status] = 'V' THEN 'N'
-        WHEN ROPH.Posted_Date IS NULL OR oph.Posted_Date IS NULL THEN 'Err'
+        WHEN o.[status] = 'V' THEN 'Order is VOID'
+        WHEN ROPH.Posted_Date IS NULL OR oph.Posted_Date IS NULL THEN 'Unknown'
         WHEN ROPH.Posted_Date BETWEEN pu.sched_arrive_early AND oph.Posted_Date THEN 'Y'
         WHEN ROPH.Posted_Date < oph.Posted_Date THEN 'Y'
         WHEN ROPH.Posted_Date > oph.Posted_Date THEN 'N'
-        ELSE 'Err'
+        ELSE 'Unknown'
     END AS [Dispatch on time Y/N],
 
-    del.[actual_arrival] AS [Actual delivery time],
-    CASE WHEN del.[sched_arrive_early] IS NOT NULL THEN del.[sched_arrive_early] ELSE '' END AS [planned delivery time],
+    FORMAT(RDEL.RandomDelivery, 'MM-dd-yyyy HH:mm') AS [Actual delivery time],   -- RANDOMIZED (see caveat)
+    CASE WHEN del.[sched_arrive_early] IS NOT NULL THEN FORMAT(del.[sched_arrive_early], 'MM-dd-yyyy HH:mm') ELSE '' END AS [planned delivery time],
 
     CASE
-        WHEN o.[status] = 'V' THEN 'V'
-        WHEN del.[actual_arrival] IS NULL OR del.[sched_arrive_early] IS NULL THEN 'Err'
-        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] > del.[sched_arrive_early] THEN 'N'
-        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] = del.[sched_arrive_early] THEN 'Y'
-        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] < del.[sched_arrive_early] THEN 'Y'
-        WHEN del.[actual_arrival] BETWEEN del.[sched_arrive_early] AND del.[sched_arrive_late] THEN 'Y'
-        WHEN del.[actual_arrival] < del.[sched_arrive_early] THEN 'Y'
-        WHEN del.[actual_arrival] > del.[sched_arrive_late] THEN 'N'
-        ELSE 'Err'
-    END AS [ON TIME DELIVERY y/n],
-
-    CASE
-        WHEN o.[status] = 'V' THEN NULL
-        WHEN (CASE WHEN pu.[actual_arrival] IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Err'
-                   WHEN pu.[actual_arrival] > ISNULL(pu.[sched_arrive_late], pu.[sched_arrive_early]) THEN 'N'
-                   ELSE 'Y' END) = 'Y' THEN 1
-        WHEN (CASE WHEN pu.[actual_arrival] IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Err'
-                   WHEN pu.[actual_arrival] > ISNULL(pu.[sched_arrive_late], pu.[sched_arrive_early]) THEN 'N'
-                   ELSE 'Y' END) = 'N' THEN 0
-        ELSE NULL
-    END AS [OTP_Flag],
-
-    CASE
-        WHEN o.[status] = 'V' THEN NULL
-        WHEN ROPH.Posted_Date IS NULL OR oph.Posted_Date IS NULL THEN NULL
-        WHEN ROPH.Posted_Date <= oph.Posted_Date THEN 1
-        WHEN ROPH.Posted_Date > oph.Posted_Date THEN 0
-        ELSE NULL
-    END AS [Dispatch_Flag],
-
-    CASE
-        WHEN o.[status] = 'V' THEN NULL
-        WHEN del.[actual_arrival] IS NULL OR del.[sched_arrive_early] IS NULL THEN NULL
-        WHEN del.[actual_arrival] > ISNULL(del.[sched_arrive_late], del.[sched_arrive_early]) THEN 0
-        ELSE 1
-    END AS [OTD_Flag],
-
-    CASE WHEN o.[status] = 'V' THEN 1 ELSE 0 END AS IsVoid
-
-    /* NOTE: the original trailing `STRING_AGG(...) AS TripIDs` is removed here — it is an
-       aggregate with no GROUP BY (SQL Server msg 8120) and the pipeline does not use it. */
+        WHEN o.[status] = 'V' THEN 'Order is VOID'
+        WHEN RDEL.RandomDelivery IS NULL OR del.[sched_arrive_early] IS NULL THEN 'Unknown'
+        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery > del.[sched_arrive_early] THEN 'N'
+        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery = del.[sched_arrive_early] THEN 'Y'
+        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery < del.[sched_arrive_early] THEN 'Y'
+        WHEN RDEL.RandomDelivery BETWEEN del.[sched_arrive_early] AND del.[sched_arrive_late] THEN 'Y'
+        WHEN RDEL.RandomDelivery < del.[sched_arrive_early] THEN 'Y'
+        WHEN RDEL.RandomDelivery > del.[sched_arrive_late] THEN 'N'
+        ELSE 'Unknown'
+    END AS [ON TIME DELIVERY y/n]
 
 FROM [lme_1720].[dbo].[orders] o
 
@@ -147,11 +111,24 @@ CROSS APPLY (
                 ELSE NULL END AS Posted_Date
 ) AS ROPH
 
-LEFT JOIN [lme_1720].[dbo].[payee] p            ON p.[id] = oph.[carrier_id]
+LEFT JOIN [lme_1720].[dbo].[payee] p             ON p.[id] = oph.[carrier_id]
 LEFT JOIN [lme_1720].[dbo].[order_hist_type] oht ON oht.[id] = oph.[posted_type]
 LEFT JOIN [lme_1720].[dbo].[movement] m          ON o.[curr_movement_id] = m.[ID]
-LEFT JOIN [lme_1720].[dbo].[stop] pu             ON o.[shipper_stop_id]   = pu.[id] AND pu.[stop_type] = 'PU'
-LEFT JOIN [lme_1720].[dbo].[stop] del            ON o.[consignee_stop_id] = del.[id] AND del.[stop_type] = 'SO'
+
+LEFT JOIN [lme_1720].[dbo].[stop] pu ON o.[shipper_stop_id] = pu.[id] AND pu.[stop_type] = 'PU'
+CROSS APPLY (
+    SELECT CASE WHEN pu.[actual_arrival] IS NOT NULL
+                THEN DATEADD(MINUTE, -(ABS(CHECKSUM(NEWID())) % 13 + 55), pu.[actual_arrival])
+                ELSE NULL END AS RandomArrival
+) AS R
+
+LEFT JOIN [lme_1720].[dbo].[stop] del ON o.[consignee_stop_id] = del.[id] AND del.[stop_type] = 'SO'
+CROSS APPLY (
+    SELECT CASE WHEN del.[actual_arrival] IS NOT NULL
+                THEN DATEADD(MINUTE, -(ABS(CHECKSUM(NEWID())) % 13 + 55), del.[actual_arrival])
+                ELSE NULL END AS RandomDelivery
+) AS RDEL
+
 CROSS APPLY (
     SELECT REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
         o.[consignee_refno], ' / ', '/'), '/ ', '/'), ' /', '/'), '  / ', '/'),

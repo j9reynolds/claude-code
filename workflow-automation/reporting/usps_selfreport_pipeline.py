@@ -133,9 +133,12 @@ def _is_reason(h):
 def extract_raw_rows(path):
     """Read RAW rows from a .xlsx (any sheet carrying an 'O/D PAIR' header) or a .csv.
     Returns (rows, meta) where rows is a list of dicts the generator understands."""
-    if path.lower().endswith(".csv"):
+    if path.lower().endswith((".csv", ".tsv", ".txt")):
         with open(path, encoding="utf-8-sig") as fh:
-            rd = csv.DictReader(fh)
+            first = fh.readline()
+            fh.seek(0)
+            delim = "\t" if first.count("\t") > first.count(",") else ","
+            rd = csv.DictReader(fh, delimiter=delim)
             fields = rd.fieldnames or []
             low = [(f or "").strip().lower() for f in fields]
 

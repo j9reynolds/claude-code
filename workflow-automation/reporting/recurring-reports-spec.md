@@ -77,10 +77,16 @@ status `D`/`V`, `id NOT LIKE '%S%'`, emits one row per load with `O/D PAIR`
 - **`ON TIME Arrival Y/N` (OTP)** = `actual_arrival <= COALESCE(sched_arrive_late, sched_arrive_early)` on the pickup stop; void → `V`.
 - **`ON TIME DELIVERY y/n` (OTD)** = same rule on the delivery stop; void → `V`.
 - **`Dispatch on time Y/N`** = based on when the **rate confirmation** was sent
-  (`order_post_hist`, `posted_type='C'`). ⚠️ **The "actual dispatch" is synthetic:** it is the
-  rate-con `posted_date` **minus a random 55–67 minutes** (`NEWID()`), so it is always earlier
-  than "planned" → Dispatch is ≈100% by construction and changes every run. This metric does
-  not measure real dispatch performance; see the header note in `usps_selfreport_extract.sql`.
+  (`order_post_hist`, `posted_type='C'`).
+
+⚠️ **All three "actual" timestamps are randomized and non-deterministic** (confirmed as the
+query behind both the May and August filed reports — both label voids `Order is VOID`, which
+only this version emits). Each actual is the real McLeod value **minus a random 55–67 minutes**
+via `NEWID()`: `RandomArrival`→OTP, `RandomDelivery`→OTD, `ROPH`→Dispatch. So every metric is
+scored against a time shifted ~1h **earlier** than McLeod recorded → OTP/OTD/Dispatch all read
+**systematically better than actual**, the numbers **change every run**, and nothing reconciles
+against McLeod on audit. Recommend computing on-time from the real `actual_arrival` /
+`actual_departure`. See the header note in `usps_selfreport_extract.sql`.
 
 Reason codes are added by hand after export. The Overview tab aggregates the `Y/N` flags per
 lane; the generator consumes those flags (and tolerates the numeric `1/0/NULL` `*_Flag`
