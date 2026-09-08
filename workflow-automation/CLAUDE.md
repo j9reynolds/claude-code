@@ -103,6 +103,46 @@ max_buy, rate_confirmation_status, rate_confirmation_sent_date); carrier = `paye
 Direct SQL to DB02 and the McLeod REST API remain unreachable from the sandbox (no route;
 egress proxy 403s non-allowlisted hosts) — the connector is the only in-session path.
 
+## Mailbox access — via the Microsoft 365 connector (default since 2026-09-08)
+
+Email is the real operational channel, so how the watcher reaches it is a first-class
+constraint, not a detail. **The connector is the only mailbox path that works here.**
+
+- **IMAP with an app password is a dead end on this tenant.** Exchange Online has broadly
+  disabled basic auth for IMAP; the app password is refused however correct it is
+  (`NO AUTHENTICATE failed. Provided authentication mechanism is not supported`). No amount
+  of credential fixing helps. Cloud sessions cannot use it either — outbound 993 is blocked,
+  only HTTPS/443 through the egress proxy is reachable. `scripts/fetch_mail.py` and
+  `Import-OpsCredential.ps1 -TestImap` remain correct for tenants that still permit basic auth.
+- **The M365 connector itself is healthy** — verified live 2026-09-08: `get_me`,
+  `outlook_email_search`, `read_resource` all return normally for the signed-in account.
+  A mailbox problem is a *config* problem until proven otherwise; probe the connector first.
+- **`mcleod-ops` now defaults to `adapter: "microsoft365"`** (was `imap`, which could not work).
+  Four things the adapter block encodes, each a real failure mode rather than a preference:
+  - **Read-only is enforced by an allowlist.** The connector exposes `outlook_send_mail`,
+    `outlook_forward_mail`, `outlook_batch_delete_messages` in the same tool list as its
+    search. The watcher calls only what `read_tools` names; `never_call` lists 13 neighbours.
+  - **Ledger keys on `internetMessageId`** (RFC822 Message-ID, brackets stripped) — never the
+    connector's own `id`, which is mailbox- and folder-scoped. A message moved to Archive
+    re-keys under the latter, defeats the claim, and dispatches a second agent at a carrier
+    that was already answered. Stripping the brackets also matches what `fetch_mail.py`
+    produces, so the ledger survives an adapter switch.
+  - **Search returns a truncated preview, not a body.** Routes match on body content (pickup
+    city, delivery city, rate), so each surviving message needs a second `read_resource` call
+    on the returned `uri`. Attachments arrive on that same read.
+  - **The search caps at 25 results per request** whatever `limit` asks, and reports it
+    (`moreResults` / `nextOffset` / `totalResultCount`). Above `max_events_per_cycle` 25 the
+    cycle must page by `offset`, or leave the cursor short and report a coverage gap. Same
+    doctrine as the McLeod connector, same permanent loss if ignored.
+- **Watching a shared/ops mailbox** rather than the signed-in one needs **Full Access** granted
+  in the M365 admin center (`Mail.Read.Shared`), and `mailbox` set to that address. Missing
+  access returns a permission error, not an empty inbox — never read that as a quiet zero.
+  Two filter quirks: with a shared mailbox, free-text `query` and sender/date filters are
+  mutually exclusive, and `recipient` is unsupported. A plain date window avoids both.
+- **Known coverage gap:** the window filters on `receivedDateTime`, so the cycle sees messages
+  as they arrive — not edits, moves, deletes, or Sent Items. A reply a human already sent by
+  hand is invisible, so the watcher can route an already-answered thread.
+
 ## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT (premise now obsolete — PM to confirm)
 
 PM chose the full 365-day, all-customers figure via bulk export (not a connector sample),
@@ -168,6 +208,9 @@ Two read-only paths, both emit the identical CSV `leakage_model.py --csv` consum
 
 - **PR #3** (draft): branch `claude/workflow-automation-identification-3shwij` on
   `j9reynolds/claude-code`. CI = Semgrep, green. Subscribed for events.
+- **PR #7** (MERGED 2026-09-08, merge commit `6f00a76`): branch `claude/m365-bug-fix-pwtvt3`.
+  Made the `mcleod-ops` Microsoft 365 mailbox adapter real — see the mailbox-access section
+  above. Docs/config only, no executable code; `fetch_mail.py` untouched. CI = Semgrep, green.
 - **Review artifact:** https://claude.ai/code/artifact/acd9c1c8-553c-4d80-8062-7667f1a63e38
   (note: artifact wake-subscriptions do NOT register in this session; re-read manually).
 - File map: `README.md` (index), `discovery-findings.md` (7 patterns), `opportunity-backlog.md`
