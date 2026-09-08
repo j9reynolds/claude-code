@@ -34,10 +34,10 @@
    * Disable email entirely with -MailMethod None (produces the file only).
  Recipient defaults to you for review; add K.Cash etc. via -EmailCc only when you want it to
  go straight out (auto-sending a partner report unreviewed is riskier — left off by default).
- SharePoint drop prereq: run with -SharePointDir pointing at the USPS library's path ON THIS
-   HOST — either the OneDrive sync-client folder (e.g.
-   "C:\Users\<you>\Delta Freight Systems\DeltaGroup - USPS Monthly Reporting") or a mapped/UNC
-   path to it. Left blank => the drop is skipped (file still lands in -OutDir).
+ SharePoint drop: -SharePointDir defaults to J.Reynolds' OneDrive-synced "USPS Monthly Reporting"
+   library folder on this host, so no flag is needed on his machine. Override -SharePointDir if the
+   run host syncs it to a different path (or use a mapped/UNC path); set it to "" to skip the drop
+   (the file still lands in -OutDir either way — the step is guarded).
 =====================================================================================
 #>
 param(
@@ -54,7 +54,9 @@ param(
   [string]$EmailFrom  = "J.Reynolds@DeltaGroupLog.com",       # used only by the Smtp method
   [string]$SmtpServer = "",                                   # required only by the Smtp method
   # ---- SharePoint drop (a plain filesystem copy on THIS host, not the Claude M365 connector) ----
-  [string]$SharePointDir = ""                                 # locally-synced USPS library path or UNC; blank = skip
+  # Default is the OneDrive-synced path of the "USPS Monthly Reporting" SharePoint library on the
+  # run host. Override with -SharePointDir if the sync path differs; set to "" to skip the drop.
+  [string]$SharePointDir = "C:\Users\J.Reynolds\OneDrive - Delta Freight Systems\Delta Group Logistics - Global Library of SOPs, Policies and Work Instructions - USPS Monthly Reporting"
 )
 
 $ErrorActionPreference = "Stop"
