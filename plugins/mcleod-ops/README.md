@@ -48,9 +48,36 @@ Values written as `${VAR}` are resolved from the environment at run time. Keep t
 
 | `adapter` | Connects via | Use when |
 |---|---|---|
-| `imap` | Direct IMAP with an app password | You have an app password for the mailbox itself |
-| `microsoft365` | An already-connected Outlook MCP connector | The session has Microsoft 365 connected with access to the mailbox |
+| `microsoft365` | An already-connected Outlook MCP connector | **Default.** The session has Microsoft 365 connected with access to the mailbox |
 | `gmail` | An already-connected Gmail MCP connector | Same, for Google Workspace |
+| `imap` | Direct IMAP with an app password | The tenant still permits basic auth for IMAP, and you are running locally |
+
+`microsoft365` ships as the default because it is the only mailbox path that works in the two situations most people are actually in — a tenant with basic auth switched off, and a Claude Code cloud session. Read the two bullets at the end of this section before choosing `imap`.
+
+#### The `microsoft365` adapter
+
+Nothing to install and no secret to set: the connector already holds the credential. Connect Microsoft 365 to the session, then point the `microsoft365` block in `sources.json` at your mailbox.
+
+```jsonc
+"adapter": "microsoft365",
+"mailbox": "${OPS_MAILBOX}",
+"microsoft365": {
+  "read_tools":  { "outlook_email_search": "…", "read_resource": "…", "get_me": "…" },
+  "never_call":  ["outlook_send_mail", "outlook_send_draft", "outlook_forward_mail", "…"],
+  "queries":     [{ "tool": "outlook_email_search", "id_field": "internetMessageId", … }]
+}
+```
+
+The shipped block is filled in and commented; four parts of it carry the weight, and all four are things a mail connector gets wrong quietly rather than loudly:
+
+- **`read_tools` is an allowlist, and `never_call` is the reason it has to be.** A mail connector exposes `outlook_send_mail` and `outlook_batch_delete_messages` in the same tool list as its search — sometimes one word away from the tool you want. The watcher is read-only, so it calls what `read_tools` names and nothing else. Drafting a reply belongs to a handler, at that handler's autonomy.
+- **`id_field` must be `internetMessageId`, not the connector's `id`.** The RFC822 Message-ID is stable for the life of the message; the connector's own `id` is mailbox- and folder-scoped and changes when a message moves — so a rule filing a tender into a subfolder would make it look brand new and get a second agent dispatched at a carrier that was already answered. Stripping the angle brackets also makes the id identical to the one the `imap` adapter produces, so the ledger survives a switch between adapters.
+- **Search returns a preview; bodies need a second call.** `outlook_email_search` returns metadata and a truncated snippet. Routes match on body content — a pickup city, a delivery city, a rate — so the watcher reads each surviving message in full via `read_resource` on the `uri` the search returned. Attachments come back on that same read.
+- **The search caps at 25 results per request** whatever `limit` asks for, and reports it in a trailing item (`moreResults` / `nextOffset` / `totalResultCount`). Raise `max_events_per_cycle` above 25 and one call no longer covers a cycle, so the watcher pages by `offset` — and where it stops short, reports a coverage gap and leaves the cursor behind the unread page rather than skipping it.
+
+To watch a shared or team mailbox rather than your own, set `mailbox` to that address (it becomes `mailboxOwnerEmail`) and grant the signed-in account **Full Access** to it in the M365 admin center. Without that grant the connector returns a permission error, not an empty inbox — which the watcher reports as an access gap rather than a quiet zero. Two parameter quirks are worth knowing: with a shared mailbox you may pass a free-text `query` *or* the sender/date filters but not both, and `recipient` is unsupported there. A plain date window avoids both.
+
+#### The `imap` adapter
 
 The `imap` path sidesteps delegate access entirely: it signs in **as the watched mailbox**, so it works for a shared/test mailbox that your own account has no rights over. Set two variables and `scripts/fetch_mail.py` does the rest:
 
@@ -80,7 +107,7 @@ Start Claude Code from that same shell so it inherits the variables. They live i
 Two things that will bite you if nobody says them out loud:
 
 - **Claude Code cloud sessions cannot use the `imap` adapter.** Outbound port 993 is blocked there — only HTTPS/443 through the agent proxy is reachable. Run the IMAP path from a local session (which is also where Credential Manager lives), or use the `microsoft365`/`gmail` connector adapters in the cloud.
-- **Microsoft has broadly disabled basic auth for IMAP in Exchange Online.** An app password will be refused regardless of whether it is correct, with `NO AUTHENTICATE failed. Provided authentication mechanism is not supported`. If you see that, the `imap` adapter is a dead end for that tenant — no amount of credential fixing helps. Switch to the `microsoft365` adapter and grant the signing-in account **Full Access** to the mailbox in the M365 admin center. That path needs no app password at all. (The remaining alternative, if Full Access is not grantable, is OAuth2/XOAUTH2 via a registered Entra app — considerably more setup.)
+- **Microsoft has broadly disabled basic auth for IMAP in Exchange Online.** An app password will be refused regardless of whether it is correct, with `NO AUTHENTICATE failed. Provided authentication mechanism is not supported`. If you see that, the `imap` adapter is a dead end for that tenant — no amount of credential fixing helps. Switch to the `microsoft365` adapter above — it needs no app password at all, and it is the shipped default for exactly this reason. (The remaining alternative, if Full Access is not grantable, is OAuth2/XOAUTH2 via a registered Entra app — considerably more setup.)
 
 **McLeod** supports three adapters, because shops integrate with it differently:
 
