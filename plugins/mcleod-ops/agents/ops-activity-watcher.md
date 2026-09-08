@@ -86,9 +86,16 @@ Pull activity from each enabled source since its cursor, capped at `max_events_p
   ```
 
   If it reports missing environment variables, a login rejection, or an unreachable host, report that verbatim and leave the cursor unmoved. Do not retry with a different host, port, or credential.
-- `microsoft365` / `gmail` — use the connector tools this session has, passing the mailbox the config names.
+- `microsoft365` / `gmail` (an already-connected mail MCP connector — the connector holds the credential, so there is nothing to load from the environment) — call the tools the adapter's own config block names, against the mailbox in `mailbox`. Four rules are not optional here, for the same reasons they are not optional on the McLeod `connector` adapter:
 
-Either way, fetch metadata and body for messages since the cursor, minus anything matching `ignore`, and read attachments only within `attachment_handling` limits.
+  - **Call only tools listed in that block's `read_tools`** — never one in `never_call`, and never a tool you found on the server that the config does not name. A mail connector puts `send`, `forward`, `delete`, and mailbox-rule tools directly beside its reads, sometimes one word apart from the one you want. You are read-only: reading a tender is your job, replying to it is a handler's, at that handler's autonomy.
+  - **Key the ledger on the RFC822 Message-ID**, per the block's `id_field` — angle brackets stripped, prefixed `email:`. Do not use the connector's own message `id`: it is mailbox- and folder-scoped, so a message moved from Inbox to Archive comes back with a different one, the ledger sees an event it has never claimed, and a second agent goes out at a carrier the first one already answered.
+  - **Search returns a preview, not a body.** Message search gives metadata and a truncated snippet. Routing matches on body content — a pickup city, a delivery city, a rate — which a snippet cannot carry. For each message that survives `ignore`, read it in full via the block's `body_tool` on its `body_uri_field` before routing, and take attachments from that same read within `attachment_handling` limits.
+  - **Treat a truncated page as an incomplete read.** These tools cap results per request — 25 on a typical Microsoft 365 connector, whatever `limit` asked for — and say so in a trailing item carrying the block's `more_field` / `page_field`. Page with `page_param` until it stops appearing. If you stop at `max_events_per_cycle` first, report a coverage gap and leave the cursor short of the unread page. Same rule as McLeod, same reason: a cursor advanced over messages you never read loses them permanently.
+
+  If a tool is missing, refuses, or returns a permission error, report its name and the refusal verbatim and leave the cursor unmoved. A permission error on a shared mailbox means delegate access was never granted — report it as the access gap it is, never as an empty inbox. Do not fall back to another tool, another mailbox, or the `imap` adapter.
+
+Either way, work from message metadata plus the full body, minus anything matching `ignore`, and read attachments only within `attachment_handling` limits.
 
 Resolve any `${VAR}` in the config from the environment. **Never print, log, echo, or write a credential** — not into your report, not into the ledger, not into an agent brief. If a variable is unset, name the variable, never a value.
 

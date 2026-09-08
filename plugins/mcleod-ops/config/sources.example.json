@@ -10,8 +10,8 @@
       "id": "ops-mailbox",
       "kind": "email",
       "enabled": true,
-      "adapter": "imap",
-      "_adapter_options": "imap | microsoft365 | gmail \u2014 use imap when connecting with an app password; use microsoft365/gmail to ride an already-connected MCP connector instead",
+      "adapter": "microsoft365",
+      "_adapter_options": "imap | microsoft365 | gmail \u2014 microsoft365/gmail ride an already-connected MCP connector and need no secret here; imap signs in as the mailbox itself with an app password. Default is microsoft365 because the imap path is unavailable in two common cases: Exchange Online has broadly disabled basic auth for IMAP, and Claude Code cloud sessions cannot reach port 993. See the plugin README before choosing imap.",
       "mailbox": "${OPS_MAILBOX}",
       "folders": [
         "INBOX"
@@ -23,6 +23,58 @@
         "tls": true,
         "username_env": "OPS_MAILBOX",
         "password_env": "OPS_MAIL_APP_PASSWORD"
+      },
+      "microsoft365": {
+        "_comment": "Used when adapter is 'microsoft365'. Reads the mailbox through an already-connected Microsoft 365 MCP connector, so the connector owns the credential and nothing secret belongs here \u2014 and no app password, which Exchange Online no longer accepts for IMAP. Tool and parameter names differ per deployment: read them off your own connector's tool schemas rather than assuming these. The shape below is transcribed from a real one.",
+        "server": "${OPS_MAIL_MCP_SERVER}",
+        "read_tools": {
+          "outlook_email_search": "message metadata for a window \u2014 subject, sender, recipients, receivedDateTime, internetMessageId, and a resource uri. The cycle's entry point.",
+          "read_resource": "one message in full, by the uri the search returned: body, attachments, conversationId. Search returns a truncated preview, not the body.",
+          "get_me": "the signed-in account, to confirm whose delegate rights the read is riding on."
+        },
+        "never_call": [
+          "outlook_send_mail",
+          "outlook_send_draft",
+          "outlook_forward_mail",
+          "outlook_create_draft",
+          "outlook_create_reply_draft",
+          "outlook_create_reply_all_draft",
+          "outlook_update_draft",
+          "outlook_delete_draft",
+          "outlook_trash_thread",
+          "outlook_batch_delete_messages",
+          "outlook_modify_labels",
+          "outlook_batch_modify_labels",
+          "outlook_set_vacation"
+        ],
+        "_never_call_comment": "A mail connector exposes send, delete, and mailbox-rule tools directly beside its reads \u2014 often one word apart from the tool the watcher wants. This names the dangerous neighbours, but it is not exhaustive and it is not the boundary: the boundary is the allowlist above. Call only what read_tools names. Preparing a reply is a handler's job at its own autonomy, never the watcher's.",
+        "queries": [
+          {
+            "id": "mailbox-recent",
+            "tool": "outlook_email_search",
+            "params": {
+              "mailboxOwnerEmail": "${OPS_MAILBOX}",
+              "afterDateTime": "${CURSOR}",
+              "limit": 25,
+              "offset": 0
+            },
+            "cursor_field": "receivedDateTime",
+            "id_field": "internetMessageId",
+            "id_prefix": "email:",
+            "body_tool": "read_resource",
+            "body_uri_field": "uri",
+            "page_param": "offset",
+            "page_field": "nextOffset",
+            "more_field": "moreResults",
+            "total_field": "totalResultCount"
+          }
+        ],
+        "_id_comment": "id_field is internetMessageId \u2014 the RFC822 Message-ID \u2014 with its angle brackets stripped, which yields the same 'email:<message-id>' the imap adapter produces, so the ledger stays consistent if you ever switch adapters. Do NOT key the ledger on the connector's own 'id' field: that one is mailbox- and folder-scoped, so a message moved from Inbox to Archive (by hand or by a rule) comes back with a different id, the ledger sees a new event, and a second agent gets dispatched at the same carrier. Preventing exactly that is what the ledger is for.",
+        "_body_comment": "outlook_email_search returns metadata plus a short truncated preview \u2014 NOT the body. Routing matches on body content (a pickup city, a delivery city, a rate), which a preview cannot carry. For every message that survives 'ignore', call body_tool on body_uri_field and route from that. Attachments arrive on the same read, subject to attachment_handling.",
+        "_pagination_comment": "This tool returns at most 25 results per request whatever 'limit' asks for, and reports its own truncation: a final item carrying more_field / page_field / total_field. If max_events_per_cycle is above 25, one call does not cover the cycle \u2014 page by passing page_field back as page_param until the final item stops carrying it. If you stop early, that is a coverage gap to report with the cursor left short, not a complete read. A cursor advanced over a page that was never read loses those messages permanently.",
+        "_filter_comment": "Combinations this tool rejects or silently narrows \u2014 the symptom is a wrong or empty result, not an error. With mailboxOwnerEmail set (the shared-mailbox path), use a free-text 'query' OR the sender/date filters, never both, and 'recipient' is not supported at all. 'order' is incompatible with a free-text 'query', and setting 'order' without 'folderName' scopes the search to Inbox by default. For a watch cycle prefer the date window alone: it is the combination that pages predictably. Folder names here are Outlook display names and are case-insensitive ('Inbox', 'Sent Items'), so the IMAP spelling INBOX also resolves.",
+        "_access_comment": "mailboxOwnerEmail reads a shared mailbox, or another account you hold delegate rights over; omit it to read the signed-in account's own mailbox. Reading another mailbox needs Full Access granted in the M365 admin center (Mail.Read.Shared). When it is missing the connector returns a permission error rather than an empty inbox \u2014 report that verbatim; never read it as a quiet zero.",
+        "_coverage_comment": "KNOWN GAP: the window filters on receivedDateTime, so the cycle sees messages as they arrive. It does not see a message edited, moved, or deleted after arrival, and it does not see Sent Items unless folderName names that folder \u2014 so a reply a human already sent by hand is invisible, and the watcher can route a thread that is already answered. Carry that into the report rather than letting a clean cycle imply the mailbox is fully covered."
       },
       "ignore": {
         "from_domains": [
