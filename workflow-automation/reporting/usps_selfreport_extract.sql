@@ -12,20 +12,18 @@
    Scope: customer UNITMETN, ordered_date in the prior calendar month, status D/V,
    id NOT LIKE '%S%'. O/D PAIR = pu.city, ST | del.city, ST.
 
-   ⚠️ DATA-INTEGRITY CAVEAT — ALL THREE "actual" timestamps are RANDOMIZED and
-   NON-DETERMINISTIC. Each is the real McLeod value minus a random 55–67 minutes via
-   NEWID():
-       RandomArrival  = pu.actual_arrival  − rand(55–67m)   -> drives OTP
-       RandomDelivery = del.actual_arrival − rand(55–67m)   -> drives OTD
-       ROPH.Posted_Date = rate-con posted_date − rand(55–67m) -> drives Dispatch
-   Consequences: (a) every metric is computed against a time shifted ~1h EARLIER than
-   McLeod recorded, so OTP/OTD/Dispatch read systematically BETTER than actual;
-   (b) results CHANGE on every run and do not reconcile against McLeod on audit;
-   (c) Dispatch is ~100% by construction (actual is always before planned). For a number
-   self-certified to a partner (J.B. Hunt), consider computing on-time from the REAL
-   McLeod actual_arrival / actual_departure instead of a randomized value.
-
-   Query preserved as run by Ops.
+   Columns & timestamps:
+     * Actual arrival time  = REAL McLeod pu.actual_arrival   -> drives OTP (on-time pickup)
+     * Actual delivery time = REAL McLeod del.actual_arrival  -> drives OTD (on-time delivery)
+     * planned dispatch time = when the Rate Confirmation was CREATED (order_post_hist,
+       posted_type = 'C', posted_date)
+     * actual dispatch time = the ONLY randomized column: rate-con created time minus a
+       random 55–67 minutes (NEWID()) -> drives Dispatch.
+   ⚠️ Because "actual dispatch" is derived from "planned dispatch" minus a random offset,
+   Dispatch is ~100% on-time by construction and NON-DETERMINISTIC (changes each run). OTP
+   and OTD are now computed from the real McLeod times, so they are reproducible and
+   reconcile against McLeod. (If a real dispatch/departure timestamp becomes available,
+   point the dispatch comparison at it to make Dispatch real too.)
    ============================================================================ */
 
 DECLARE @PUDate_START DATE;
@@ -56,21 +54,22 @@ SELECT
            COALESCE(LTRIM(RTRIM(del.[city_name])), ''), ', ', COALESCE(LTRIM(RTRIM(del.[state])), '')) AS [O/D PAIR],
 
     CASE WHEN pu.[sched_arrive_early] IS NOT NULL THEN FORMAT(pu.[sched_arrive_early], 'MM-dd-yyyy HH:mm') ELSE '' END AS [Scheduled arrival time],
-    FORMAT(R.RandomArrival, 'MM-dd-yyyy HH:mm') AS [Actual arrival time],       -- RANDOMIZED (see caveat)
+    FORMAT(pu.[actual_arrival], 'MM-dd-yyyy HH:mm') AS [Actual arrival time],    -- REAL McLeod time
 
     CASE
         WHEN o.[status] = 'V' THEN 'Order is VOID'
-        WHEN R.RandomArrival IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Unknown'
-        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival > pu.[sched_arrive_early] THEN 'N'
-        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival = pu.[sched_arrive_early] THEN 'Y'
-        WHEN pu.[sched_arrive_late] IS NULL AND R.RandomArrival < pu.[sched_arrive_early] THEN 'Y'
-        WHEN R.RandomArrival BETWEEN pu.[sched_arrive_early] AND pu.[sched_arrive_late] THEN 'Y'
-        WHEN R.RandomArrival < pu.[sched_arrive_early] THEN 'Y'
-        WHEN R.RandomArrival > pu.[sched_arrive_late] THEN 'N'
+        WHEN pu.[actual_arrival] IS NULL OR pu.[sched_arrive_early] IS NULL THEN 'Unknown'
+        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] > pu.[sched_arrive_early] THEN 'N'
+        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] = pu.[sched_arrive_early] THEN 'Y'
+        WHEN pu.[sched_arrive_late] IS NULL AND pu.[actual_arrival] < pu.[sched_arrive_early] THEN 'Y'
+        WHEN pu.[actual_arrival] BETWEEN pu.[sched_arrive_early] AND pu.[sched_arrive_late] THEN 'Y'
+        WHEN pu.[actual_arrival] < pu.[sched_arrive_early] THEN 'Y'
+        WHEN pu.[actual_arrival] > pu.[sched_arrive_late] THEN 'N'
         ELSE 'Unknown'
     END AS [ON TIME Arrival Y/N],
 
-    FORMAT(ROPH.Posted_Date, 'MM-dd-yyyy HH:mm') AS [actual dispatch time],      -- RANDOMIZED (see caveat)
+    FORMAT(ROPH.Posted_Date, 'MM-dd-yyyy HH:mm') AS [actual dispatch time],      -- RANDOMIZED (the only synthetic column)
+    -- planned dispatch = when the Rate Confirmation was created (order_post_hist posted_type='C')
     CASE WHEN oph.[posted_date] IS NOT NULL THEN FORMAT(oph.[posted_date], 'MM-dd-yyyy HH:mm') ELSE '' END AS [planned dispatch time],
 
     CASE
@@ -82,18 +81,18 @@ SELECT
         ELSE 'Unknown'
     END AS [Dispatch on time Y/N],
 
-    FORMAT(RDEL.RandomDelivery, 'MM-dd-yyyy HH:mm') AS [Actual delivery time],   -- RANDOMIZED (see caveat)
+    FORMAT(del.[actual_arrival], 'MM-dd-yyyy HH:mm') AS [Actual delivery time],  -- REAL McLeod time
     CASE WHEN del.[sched_arrive_early] IS NOT NULL THEN FORMAT(del.[sched_arrive_early], 'MM-dd-yyyy HH:mm') ELSE '' END AS [planned delivery time],
 
     CASE
         WHEN o.[status] = 'V' THEN 'Order is VOID'
-        WHEN RDEL.RandomDelivery IS NULL OR del.[sched_arrive_early] IS NULL THEN 'Unknown'
-        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery > del.[sched_arrive_early] THEN 'N'
-        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery = del.[sched_arrive_early] THEN 'Y'
-        WHEN del.[sched_arrive_late] IS NULL AND RDEL.RandomDelivery < del.[sched_arrive_early] THEN 'Y'
-        WHEN RDEL.RandomDelivery BETWEEN del.[sched_arrive_early] AND del.[sched_arrive_late] THEN 'Y'
-        WHEN RDEL.RandomDelivery < del.[sched_arrive_early] THEN 'Y'
-        WHEN RDEL.RandomDelivery > del.[sched_arrive_late] THEN 'N'
+        WHEN del.[actual_arrival] IS NULL OR del.[sched_arrive_early] IS NULL THEN 'Unknown'
+        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] > del.[sched_arrive_early] THEN 'N'
+        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] = del.[sched_arrive_early] THEN 'Y'
+        WHEN del.[sched_arrive_late] IS NULL AND del.[actual_arrival] < del.[sched_arrive_early] THEN 'Y'
+        WHEN del.[actual_arrival] BETWEEN del.[sched_arrive_early] AND del.[sched_arrive_late] THEN 'Y'
+        WHEN del.[actual_arrival] < del.[sched_arrive_early] THEN 'Y'
+        WHEN del.[actual_arrival] > del.[sched_arrive_late] THEN 'N'
         ELSE 'Unknown'
     END AS [ON TIME DELIVERY y/n]
 
@@ -115,19 +114,8 @@ LEFT JOIN [lme_1720].[dbo].[payee] p             ON p.[id] = oph.[carrier_id]
 LEFT JOIN [lme_1720].[dbo].[order_hist_type] oht ON oht.[id] = oph.[posted_type]
 LEFT JOIN [lme_1720].[dbo].[movement] m          ON o.[curr_movement_id] = m.[ID]
 
-LEFT JOIN [lme_1720].[dbo].[stop] pu ON o.[shipper_stop_id] = pu.[id] AND pu.[stop_type] = 'PU'
-CROSS APPLY (
-    SELECT CASE WHEN pu.[actual_arrival] IS NOT NULL
-                THEN DATEADD(MINUTE, -(ABS(CHECKSUM(NEWID())) % 13 + 55), pu.[actual_arrival])
-                ELSE NULL END AS RandomArrival
-) AS R
-
+LEFT JOIN [lme_1720].[dbo].[stop] pu  ON o.[shipper_stop_id]   = pu.[id]  AND pu.[stop_type]  = 'PU'
 LEFT JOIN [lme_1720].[dbo].[stop] del ON o.[consignee_stop_id] = del.[id] AND del.[stop_type] = 'SO'
-CROSS APPLY (
-    SELECT CASE WHEN del.[actual_arrival] IS NOT NULL
-                THEN DATEADD(MINUTE, -(ABS(CHECKSUM(NEWID())) % 13 + 55), del.[actual_arrival])
-                ELSE NULL END AS RandomDelivery
-) AS RDEL
 
 CROSS APPLY (
     SELECT REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
