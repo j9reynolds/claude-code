@@ -1,6 +1,6 @@
 <#
 =====================================================================================
- USPS GEGW Self Report — monthly runner   (extract -> generator -> styled workbook)
+ USPS GEGW Self Report - monthly runner   (extract -> generator -> styled workbook)
 -------------------------------------------------------------------------------------
  Runs on the Delta network (a host that can reach McLeod DB02 and has Python 3 + the
  SqlServer PowerShell module). One scheduled run per month produces the filled,
@@ -11,12 +11,12 @@
       itself scopes to LAST calendar month), exporting the per-load rows to a CSV.
    2. usps_selfreport_pipeline.py turns that CSV into the 3-tab, styled workbook.
    3. Output lands in -OutDir, named like the filed report.
-   4. EMAIL the workbook to -EmailTo (default: you). Sent from THIS host — NOT the Claude
-      M365 connector — via Outlook desktop (default) or an SMTP relay. It is GUARDED: if the
+   4. EMAIL the workbook to -EmailTo (default: you). Sent from THIS host - NOT the Claude
+      M365 connector - via Outlook desktop (default) or an SMTP relay. It is GUARDED: if the
       mail path is not ready, it logs a warning and still leaves the file for manual send, so
       the report starts arriving by email automatically the first month mail works.
    5. DROP a copy into the SharePoint USPS folder via -SharePointDir. This is a plain
-      filesystem copy on THIS host — NOT the Claude M365 connector (which is read-only) — so
+      filesystem copy on THIS host - NOT the Claude M365 connector (which is read-only) - so
       point it at the LOCALLY-SYNCED path of the SharePoint "USPS" library (OneDrive sync
       client) or a mapped/UNC path to it. It is GUARDED the same way as email: if the folder
       is unset or unreachable, it logs a warning and continues, leaving the file in -OutDir.
@@ -33,11 +33,11 @@
    * SMTP: run with -MailMethod Smtp -SmtpServer <relay> (and -EmailFrom).
    * Disable email entirely with -MailMethod None (produces the file only).
  Recipient defaults to you for review; add K.Cash etc. via -EmailCc only when you want it to
- go straight out (auto-sending a partner report unreviewed is riskier — left off by default).
+ go straight out (auto-sending a partner report unreviewed is riskier - left off by default).
  SharePoint drop: -SharePointDir defaults to J.Reynolds' OneDrive-synced "USPS Monthly Reporting"
    library folder on this host, so no flag is needed on his machine. Override -SharePointDir if the
    run host syncs it to a different path (or use a mapped/UNC path); set it to "" to skip the drop
-   (the file still lands in -OutDir either way — the step is guarded).
+   (the file still lands in -OutDir either way - the step is guarded).
 =====================================================================================
 #>
 param(
@@ -49,7 +49,7 @@ param(
   # ---- email delivery (runs on THIS host, not the Claude M365 connector) ----
   [ValidateSet("Outlook","Smtp","None")]
   [string]$MailMethod = "Outlook",                            # Outlook desktop COM (default), SMTP relay, or None
-  [string]$EmailTo    = "J.Reynolds@DeltaGroupLog.com",       # recipient — you review, then forward to J.B. Hunt
+  [string]$EmailTo    = "J.Reynolds@DeltaGroupLog.com",       # recipient - you review, then forward to J.B. Hunt
   [string]$EmailCc    = "",                                   # optional, comma-separated
   [string]$EmailFrom  = "J.Reynolds@DeltaGroupLog.com",       # used only by the Smtp method
   [string]$SmtpServer = "",                                   # required only by the Smtp method
@@ -76,24 +76,24 @@ $log      = Join-Path $OutDir "run_$stamp.log"
 
 "[{0}] extract: {1}\{2} <- {3}" -f (Get-Date), $Server, $Database, $sqlFile | Tee-Object -FilePath $log -Append
 
-# 1) EXTRACT — Invoke-Sqlcmd + Export-Csv handles quoting of commas in lane names cleanly.
+# 1) EXTRACT - Invoke-Sqlcmd + Export-Csv handles quoting of commas in lane names cleanly.
 Import-Module SqlServer -ErrorAction Stop
 Invoke-Sqlcmd -ServerInstance $Server -Database $Database -InputFile $sqlFile -TrustServerCertificate `
   | Export-Csv -Path $rawCsv -NoTypeInformation -Encoding UTF8
 $rows = (Import-Csv $rawCsv).Count
 "[{0}] extracted {1} rows -> {2}" -f (Get-Date), $rows, $rawCsv | Tee-Object -FilePath $log -Append
-if ($rows -eq 0) { throw "No rows returned from the extract — aborting (check the month/customer)." }
+if ($rows -eq 0) { throw "No rows returned from the extract - aborting (check the month/customer)." }
 
-# 2) GENERATE + STYLE — pass the FOLDER; the pipeline names the file canonically for $Month.
+# 2) GENERATE + STYLE - pass the FOLDER; the pipeline names the file canonically for $Month.
 "[{0}] generate into: {1}" -f (Get-Date), $OutDir | Tee-Object -FilePath $log -Append
 & python $pipeline $rawCsv $Month $Program $OutDir 2>&1 | Tee-Object -FilePath $log -Append
-if ($LASTEXITCODE -ne 0) { throw "pipeline failed (exit $LASTEXITCODE) — see $log" }
+if ($LASTEXITCODE -ne 0) { throw "pipeline failed (exit $LASTEXITCODE) - see $log" }
 if (-not (Test-Path $outXlsx)) { throw "expected workbook not found: $outXlsx (see $log)" }
 
 "[{0}] workbook ready: {1}" -f (Get-Date), $outXlsx | Tee-Object -FilePath $log -Append
 
-# 3) EMAIL — deliver the workbook to $EmailTo. Guarded: if the mail path is not ready yet
-#    (e.g. M365/Outlook not configured on this host), log a warning and continue — the file is
+# 3) EMAIL - deliver the workbook to $EmailTo. Guarded: if the mail path is not ready yet
+#    (e.g. M365/Outlook not configured on this host), log a warning and continue - the file is
 #    still produced for manual send, and the next run emails automatically once mail works.
 if ($MailMethod -ne "None") {
   $subject = "USPS GEGW Self Report - $monLabel"
@@ -130,7 +130,7 @@ else {
   Write-Host "`nReport ready for review:`n  $outXlsx"
 }
 
-# 4) SHAREPOINT DROP — copy the workbook into the SharePoint USPS folder. This is a plain
+# 4) SHAREPOINT DROP - copy the workbook into the SharePoint USPS folder. This is a plain
 #    Copy-Item on THIS host (the Claude M365 connector is read-only), so -SharePointDir must be
 #    a filesystem path: the OneDrive-synced path of the SharePoint "USPS" library, or a mapped/
 #    UNC path to it. GUARDED like the email step: if unset or unreachable, log and continue so

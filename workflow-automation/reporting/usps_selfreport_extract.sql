@@ -1,5 +1,5 @@
 /* ============================================================================
-   USPS Self Report — RAW EXTRACT  (the version actually in use, run in SSMS on McLeod LME)
+   USPS Self Report - RAW EXTRACT  (the version actually in use, run in SSMS on McLeod LME)
    ----------------------------------------------------------------------------
    Confirmed as the query behind the last two filed reports (May & August 2026): both
    label voided orders "Order is VOID" in all three Y/N columns, which only this version
@@ -18,8 +18,8 @@
      * planned dispatch time = when the Rate Confirmation was CREATED (order_post_hist,
        posted_type = 'C', posted_date)
      * actual dispatch time = the ONLY randomized column: rate-con created time minus a
-       random 55–67 minutes (NEWID()) -> drives Dispatch.
-   ⚠️ Because "actual dispatch" is derived from "planned dispatch" minus a random offset,
+       random 55-67 minutes (NEWID()) -> drives Dispatch.
+   WARNING: Because "actual dispatch" is derived from "planned dispatch" minus a random offset,
    Dispatch is ~100% on-time by construction and NON-DETERMINISTIC (changes each run). OTP
    and OTD are now computed from the real McLeod times, so they are reproducible and
    reconcile against McLeod. (If a real dispatch/departure timestamp becomes available,
