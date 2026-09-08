@@ -114,6 +114,20 @@ def read_xlsx_sheets(path):
 
 # --------------------------------------------------------------------------- extract raw
 _RAW_HEADER_KEY = "o/d pair"
+# priority-ordered aliases (lowercased). The human Y/N text columns win over numeric
+# *_Flag columns, which the extract may also carry, so 1/0 flags never shadow Y/N.
+_ALIAS = {
+    "lane": ("o/d pair", "od pair", "lane"),
+    "otp": ("on time arrival y/n", "ot arrival y/n", "otp_flag"),
+    "disp": ("dispatch on time y/n", "ot dispatch y/n", "dispatch_flag"),
+    "otd": ("on time delivery y/n", "ot delivery y/n", "otd_flag"),
+    "load_id": ("load id", "load_id"),
+}
+
+
+def _is_reason(h):
+    h = (h or "").strip().lower()
+    return h.startswith("reason") or "notes required" in h
 
 
 def extract_raw_rows(path):
@@ -122,26 +136,29 @@ def extract_raw_rows(path):
     if path.lower().endswith(".csv"):
         with open(path, encoding="utf-8-sig") as fh:
             rd = csv.DictReader(fh)
-            hmap = {}                       # original header -> canonical field
-            for fn in rd.fieldnames or []:
-                key = R._ALIASES.get((fn or "").strip().lower())
-                if key:
-                    hmap[key] = fn
-            reason_keys = [fn for fn in (rd.fieldnames or [])
-                           if (fn or "").strip().lower().startswith("reason")
-                           or "notes required" in (fn or "").strip().lower()]
+            fields = rd.fieldnames or []
+            low = [(f or "").strip().lower() for f in fields]
+
+            def pick(field):                # first alias present wins (priority order)
+                for a in _ALIAS[field]:
+                    if a in low:
+                        return fields[low.index(a)]
+                return None
+
+            cmap = {k: pick(k) for k in _ALIAS}
+            reason_keys = [f for f in fields if _is_reason(f)]
             rows = []
             for r in rd:
-                lane = (r.get(hmap.get("lane", ""), "") or "").strip()
+                lane = (r.get(cmap["lane"] or "", "") or "").strip()
                 if not lane:
                     continue
                 rows.append({
                     "lane": lane,
-                    "otp_flag": r.get(hmap.get("otp", ""), ""),
-                    "dispatch_flag": r.get(hmap.get("disp", ""), ""),
-                    "otd_flag": r.get(hmap.get("otd", ""), ""),
+                    "otp_flag": r.get(cmap["otp"] or "", ""),
+                    "dispatch_flag": r.get(cmap["disp"] or "", ""),
+                    "otd_flag": r.get(cmap["otd"] or "", ""),
                     "reason1": "; ".join(x for x in (r.get(k, "") for k in reason_keys) if str(x).strip()),
-                    "load_id": r.get(hmap.get("load_id", ""), ""),
+                    "load_id": r.get(cmap["load_id"] or "", ""),
                 })
         return rows, {"source": "csv", "sheets": [], "count": len(rows)}
 
@@ -156,18 +173,18 @@ def extract_raw_rows(path):
         header = [(_c or "").strip() for _c in grid[hdr_i]]
         low = [h.lower() for h in header]
 
-        def col(*aliases):
-            for a in aliases:
+        def col(field):                    # first alias present wins (priority order)
+            for a in _ALIAS[field]:
                 if a in low:
                     return low.index(a)
             return None
 
-        c_lane = col("o/d pair", "lane")
-        c_otp = col("on time arrival y/n", "otp_flag", "ot arrival y/n")
-        c_disp = col("dispatch on time y/n", "dispatch_flag")
-        c_otd = col("on time delivery y/n", "otd_flag", "ot delivery y/n")
-        reason_cols = [i for i, h in enumerate(low) if h.startswith("reason") or "notes required" in h]
-        c_load = col("load id", "load_id")
+        c_lane = col("lane")
+        c_otp = col("otp")
+        c_disp = col("disp")
+        c_otd = col("otd")
+        reason_cols = [i for i, h in enumerate(low) if _is_reason(h)]
+        c_load = col("load_id")
         if c_lane is None:
             continue
         n_before = len(out)

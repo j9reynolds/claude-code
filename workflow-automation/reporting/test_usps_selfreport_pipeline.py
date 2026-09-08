@@ -143,6 +143,54 @@ def test_overview_xlsx_is_valid_zip_with_expected_parts():
         os.remove(out)
 
 
+def test_sql_export_layout_prefers_yn_over_numeric_flags():
+    """The real SSMS export carries BOTH 'ON TIME Arrival Y/N' (Y/N/V) and 'OTP_Flag'
+    (1/0). The Y/N text column must win — the numeric flag must not shadow it."""
+    path = _tmp(".csv")
+    hdr = ["SUPPLIER NAME", "Contract ID", "SV Trip ID", "Load ID", "O/D PAIR",
+           "Scheduled arrival time", "Actual arrival time", "ON TIME Arrival Y/N",
+           "actual dispatch time", "planned dispatch time", "Dispatch on time Y/N",
+           "Actual delivery time", "planned delivery time", "ON TIME DELIVERY y/n",
+           "OTP_Flag", "Dispatch_Flag", "OTD_Flag", "IsVoid"]
+    rows = [
+        ["D", "'0029H", "T", "L1", "CINCINNATI, OH | DENVER, CO", "", "", "Y", "", "",
+         "Y", "", "", "N", "1", "1", "0", "0"],
+        ["D", "'0029H", "T", "L2", "CINCINNATI, OH | DENVER, CO", "", "", "N", "", "",
+         "Y", "", "", "Y", "0", "1", "1", "0"],
+        ["D", "'0029H", "T", "L3", "CHAMPAIGN, IL | PEORIA, IL", "", "", "V", "", "",
+         "N", "", "", "V", "", "", "", "1"],       # voided order
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(hdr)
+        w.writerows(rows)
+    try:
+        report, meta = P.run(path, "2026-08", "GEGW", _tmp(".xlsx"))
+    finally:
+        os.remove(path)
+    by = {l["lane"]: l for l in report["lanes"]}
+    cin = by["CINCINNATI, OH | DENVER, CO"]
+    assert cin["load_count"] == 2
+    assert cin["otp_pct"] == 50 and cin["ot_dispatch_pct"] == 100 and cin["otd_pct"] == 50
+    void = by["CHAMPAIGN, IL | PEORIA, IL"]
+    assert void["load_count"] == 1 and void["otp_pct"] == 0 and void["otd_pct"] == 0
+
+
+def test_numeric_flag_only_export():
+    """If an export carries ONLY numeric 1/0 flags, they are read correctly (1->Y, 0->N)."""
+    path = _tmp(".csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["O/D PAIR", "OTP_Flag", "Dispatch_Flag", "OTD_Flag"])
+        w.writerow(["A, X | B, Y", "1", "0", "1"])
+    try:
+        report, _ = P.run(path, "2026-08", "GEGW", _tmp(".xlsx"))
+    finally:
+        os.remove(path)
+    l = report["lanes"][0]
+    assert l["otp_pct"] == 100 and l["ot_dispatch_pct"] == 0 and l["otd_pct"] == 100
+
+
 def test_extract_from_csv():
     path = _tmp(".csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:

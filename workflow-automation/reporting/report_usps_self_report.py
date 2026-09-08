@@ -78,13 +78,14 @@ def _cl(v):
 
 
 def _flag(v):
-    """Return 'Y', 'N', or 'VOID' (VOID also for blank/unknown)."""
+    """Return 'Y', 'N', or 'VOID' (VOID also for blank/unknown).
+    Tolerant of numeric flags: 1 -> Y, 0 -> N (some extracts carry 1/0 columns)."""
     s = _cl(v).lower()
-    if s == "y":
+    if s in ("y", "1", "1.0"):
         return "Y"
-    if s == "n":
+    if s in ("n", "0", "0.0"):
         return "N"
-    return "VOID"                       # "Order is VOID", blank, or anything else
+    return "VOID"                       # "Order is VOID", 'V', blank, or anything else
 
 
 def _norm_headers(fieldnames):
