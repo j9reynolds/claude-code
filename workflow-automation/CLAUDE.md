@@ -140,7 +140,13 @@ Can't verify Excel opens w/o repair from sandbox (no Excel) — ask Justin to co
 TEMPLATE PALETTE (confirmed by Justin, baked into styles.xml): font Cambria 11; TITLE bar + HEADER
 row = black fill #000000 with WHITE bold text #FFFFFF; DATA rows = no fill, black #000000 Cambria;
 TOTAL row = fill #BFBFBF, black bold; borders thin #000000; lane % = 0% (whole), total % = 0.00%.
-Title bar spans the full row width. (Template's by-Lane title literally reads "RTH Performance
+UPDATED formatting (per Justin's screenshots): TITLE row is now MERGED across the tab, fill
+#B4C6E7, 16pt black bold (NOT the black bar — black bar is the HEADER row, white bold). Titles
+hardcoded "RTH Performance Overview (by Lane)"/"(by TripID)". Raw Data tab: top row FROZEN; the
+3 Y/N cols (ON TIME Arrival/Dispatch on time/ON TIME DELIVERY) CENTERED; every cell = "Y" gets
+fill #FFCCCC + font #FF0000 bold (styles: s8 centered, s9 Y-highlight). MONTHLY RUN WIRED:
+run_monthly.ps1 (Invoke-Sqlcmd DB02/LME_1720 → Export-Csv → pipeline → styled xlsx in output\;
+Task Scheduler day 1). Owner still reviews/sends (M365 Mail.Send not granted). Tests 9+10. (Template's by-Lane title literally reads "RTH Performance
 Overview (by Lane)" even on USPS/GEGW — I generate "{program} Performance Overview (by Lane)";
 program arg controls it — open Q whether to hardcode RTH.) Read the template colors via: decode
 share token→GUID, read sheetNNN.htm (has class names only), colors are in linked stylesheet.css

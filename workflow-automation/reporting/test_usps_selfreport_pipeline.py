@@ -207,6 +207,32 @@ def test_numeric_flag_only_export():
     assert l["otp_pct"] == 100 and l["ot_dispatch_pct"] == 0 and l["otd_pct"] == 100
 
 
+def test_formatting_merge_freeze_and_yhighlight():
+    """Title rows merged; Raw Data freezes the top row and centers/highlights the 3 Y/N cols."""
+    path = _tmp(".csv")
+    hdr = ["O/D PAIR", "ON TIME Arrival Y/N", "Dispatch on time Y/N", "ON TIME DELIVERY y/n"]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(hdr)
+        w.writerow(["A, X | B, Y", "Y", "N", "Y"])          # 2 Y cells, 1 N cell
+    out = _tmp(".xlsx")
+    try:
+        P.run(path, "2026-08", "GEGW", out)
+        z = zipfile.ZipFile(out)
+        s1 = z.read("xl/worksheets/sheet1.xml").decode()
+        s2 = z.read("xl/worksheets/sheet2.xml").decode()
+        s3 = z.read("xl/worksheets/sheet3.xml").decode()
+        assert 'mergeCell ref="A1:F1"' in s1                # by-Lane title merged
+        assert 'mergeCell ref="A1:G1"' in s2                # by-Trip title merged
+        assert 'state="frozen"' in s3 and 'ySplit="1"' in s3  # Raw Data top row frozen
+        assert s3.count('s="9"') == 2                       # two "Y" cells highlighted
+        assert s3.count('s="8"') == 1                       # one non-Y cell centered
+    finally:
+        for p in (path, out, out + ".rawrows.csv"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
 def test_extract_from_csv():
     path = _tmp(".csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:

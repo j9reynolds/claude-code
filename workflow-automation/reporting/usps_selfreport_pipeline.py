@@ -246,29 +246,35 @@ RAW_SHEET = "Raw Data With Reason Codes"     # the Overview/by-Trip formulas ref
 _STYLES_XML = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    '<fonts count="3">'
+    '<fonts count="5">'
     '<font><sz val="11"/><color rgb="FF000000"/><name val="Cambria"/></font>'                       # 0 body black
-    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Cambria"/></font>'                    # 1 white bold (title/header)
-    '<font><b/><sz val="11"/><color rgb="FF000000"/><name val="Cambria"/></font></fonts>'            # 2 black bold (total)
-    '<fills count="4">'
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Cambria"/></font>'                    # 1 white bold (header)
+    '<font><b/><sz val="11"/><color rgb="FF000000"/><name val="Cambria"/></font>'                    # 2 black bold (total)
+    '<font><b/><sz val="16"/><color rgb="FF000000"/><name val="Cambria"/></font>'                    # 3 title 16pt black bold
+    '<font><b/><sz val="11"/><color rgb="FFFF0000"/><name val="Cambria"/></font></fonts>'            # 4 red bold ("Y")
+    '<fills count="6">'
     '<fill><patternFill patternType="none"/></fill>'
     '<fill><patternFill patternType="gray125"/></fill>'
     '<fill><patternFill patternType="solid"><fgColor rgb="FF000000"/><bgColor indexed="64"/></patternFill></fill>'   # 2 black
     '<fill><patternFill patternType="solid"><fgColor rgb="FFBFBFBF"/><bgColor indexed="64"/></patternFill></fill>'   # 3 gray
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFB4C6E7"/><bgColor indexed="64"/></patternFill></fill>'   # 4 title blue
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFFFCCCC"/><bgColor indexed="64"/></patternFill></fill>'   # 5 Y pink
     '</fills>'
     '<borders count="2"><border/>'
     '<border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right>'
     '<top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="8">'
+    '<cellXfs count="10">'
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                   # 0
-    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'       # 1 title (black bar, white bold)
+    '<xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'  # 1 title (#B4C6E7, 16pt black bold, merged)
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 2 header
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 3 data
     '<xf numFmtId="9" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>'  # 4 data %
     '<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'       # 5 total (gray, black bold)
     '<xf numFmtId="10" fontId="2" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'  # 6 total %
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 7 raw data (Cambria, border)
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 7 raw data (left)
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 8 raw Y/N centered
+    '<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 9 raw "Y" (pink fill, red bold, centered)
     '</cellXfs></styleSheet>'
 )
 
@@ -287,10 +293,18 @@ def _cx(col, row, *, s=0, v=None, f=None, text=None):
     return f'<c r="{ref}"{sa}/>'
 
 
-def _sheet_xml(rows_xml, cols_xml=""):
+_FREEZE_TOP = ('<sheetViews><sheetView workbookViewId="0">'
+               '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+               '<selection pane="bottomLeft" activeCell="A2" sqref="A2"/>'
+               '</sheetView></sheetViews>')
+
+
+def _sheet_xml(rows_xml, cols_xml="", sheetviews="", mergecells=""):
+    # element order per schema: sheetViews, cols, sheetData, mergeCells
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            + cols_xml + "<sheetData>" + "".join(rows_xml) + "</sheetData></worksheet>")
+            + sheetviews + cols_xml + "<sheetData>" + "".join(rows_xml) + "</sheetData>"
+            + mergecells + "</worksheet>")
 
 
 def _cols_xml(widths):
@@ -364,7 +378,8 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         _cx(5, tr, s=6, f=f"AVERAGE(E{first}:E{last})", v=mean("otd_yes")),
         _cx(6, tr, s=5),
     ]) + "</row>")
-    sheet1 = _sheet_xml(s1, _cols_xml([34, 11, 8, 12, 8, 34]))
+    sheet1 = _sheet_xml(s1, _cols_xml([34, 11, 8, 12, 8, 34]),
+                        mergecells='<mergeCells count="1"><mergeCell ref="A1:F1"/></mergeCells>')
 
     # ---- Sheet 2: Overview Summary by Trip ----
     t2 = _cx(1, 1, s=1, text="RTH Performance Overview (by TripID)") + "".join(
@@ -396,15 +411,26 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         _cx(6, tr, s=6, f=f"AVERAGE(F{first}:F{last})", v=mean("otd_yes")),
         _cx(7, tr, s=5),
     ]) + "</row>")
-    sheet2 = _sheet_xml(s2, _cols_xml([26, 34, 11, 8, 12, 8, 12]))
+    sheet2 = _sheet_xml(s2, _cols_xml([26, 34, 11, 8, 12, 8, 12]),
+                        mergecells='<mergeCells count="1"><mergeCell ref="A1:G1"/></mergeCells>')
 
     # ---- Sheet 3: Raw Data With Reason Codes (verbatim export) ----
     rh = raw_table.get("header") or ["lane", "otp_flag", "dispatch_flag", "otd_flag", "reason1", "load_id"]
+    # the three on-time Y/N columns -> centered; any cell that equals "Y" -> pink fill/red bold
+    _YN = {"on time arrival y/n", "dispatch on time y/n", "on time delivery y/n"}
+    yn_cols = {i for i, h in enumerate(rh) if (h or "").strip().lower() in _YN}
     s3 = ['<row r="1">' + "".join(_cx(i + 1, 1, s=2, text=h) for i, h in enumerate(rh)) + "</row>"]
     for ri, rvals in enumerate(raw_table.get("rows") or [], start=2):
-        s3.append(f'<row r="{ri}">' + "".join(_cx(i + 1, ri, s=7, text=("" if v is None else str(v)))
-                                               for i, v in enumerate(rvals)) + "</row>")
-    sheet3 = _sheet_xml(s3, _cols_xml([16] * max(1, len(rh))))
+        cells = []
+        for i, v in enumerate(rvals):
+            txt = "" if v is None else str(v)
+            if i in yn_cols:
+                st = 9 if txt.strip() == "Y" else 8          # 9 = pink/red bold "Y", 8 = centered
+            else:
+                st = 7
+            cells.append(_cx(i + 1, ri, s=st, text=txt))
+        s3.append(f'<row r="{ri}">' + "".join(cells) + "</row>")
+    sheet3 = _sheet_xml(s3, _cols_xml([16] * max(1, len(rh))), sheetviews=_FREEZE_TOP)
 
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

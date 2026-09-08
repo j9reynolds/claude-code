@@ -40,8 +40,28 @@ any Delta host with no installs:
    workbook: **Overview Summary By Lane**, **Overview Summary by Trip** (TripID list per lane +
    Route/HCR), and **Raw Data With Reason Codes** (verbatim export). The two Overview tabs use
    live `COUNTIF/COUNTIFS/AVERAGE` formulas over the raw tab (cached values + `fullCalcOnLoad`)
-   so they recompute if raw data is edited, with formatting (bold shaded headers, thin borders,
-   `%` number formats, column widths, bold totals). Open once in Excel to confirm before sending.
+   so they recompute if raw data is edited. **Formatting matched to the template** (Cambria):
+   merged title row `#B4C6E7` 16pt black bold; black header bar with white bold text; `#BFBFBF`
+   bold total row; thin black borders; `0%` lanes / `0.00%` totals. On **Raw Data**: top row
+   frozen; the three Y/N columns centered; every `Y` cell filled `#FFCCCC` with `#FF0000` bold.
+   Open once in Excel to confirm before sending.
+
+### Monthly run (wired) — `run_monthly.ps1`
+
+A PowerShell runner schedules the whole chain on a Delta host that can reach McLeod:
+`Invoke-Sqlcmd` runs `usps_selfreport_extract.sql` against `DB02/LME_1720` (the SQL scopes to
+last calendar month) → `Export-Csv` → `usps_selfreport_pipeline.py` → the styled workbook in
+`output\`, named `0029H Self Report - Delta Group Logistics - <Mon YYYY>.xlsx`. Schedule it for
+the 1st via Task Scheduler:
+
+```
+schtasks /Create /TN "USPS Self Report" /SC MONTHLY /D 1 /ST 06:00 ^
+  /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\path\run_monthly.ps1"
+```
+
+Prereqs: `Import-Module SqlServer`, Python 3 on PATH, the three files co-located. The runner
+aborts on zero rows and logs each step; **the owner still reviews and sends** (no auto-send).
+Delivery via Outlook is blocked today anyway — the M365 connector lacks `Mail.Send`.
 
 ```
 python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx
