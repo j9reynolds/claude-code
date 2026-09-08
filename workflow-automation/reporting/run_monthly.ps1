@@ -15,6 +15,11 @@
       M365 connector — via Outlook desktop (default) or an SMTP relay. It is GUARDED: if the
       mail path is not ready, it logs a warning and still leaves the file for manual send, so
       the report starts arriving by email automatically the first month mail works.
+   5. DROP a copy into the SharePoint USPS folder via -SharePointDir. This is a plain
+      filesystem copy on THIS host — NOT the Claude M365 connector (which is read-only) — so
+      point it at the LOCALLY-SYNCED path of the SharePoint "USPS" library (OneDrive sync
+      client) or a mapped/UNC path to it. It is GUARDED the same way as email: if the folder
+      is unset or unreachable, it logs a warning and continues, leaving the file in -OutDir.
 
  Schedule it (Task Scheduler, 6 AM on the 1st):
    schtasks /Create /TN "USPS Self Report" /SC MONTHLY /D 1 /ST 06:00 ^
@@ -29,6 +34,10 @@
    * Disable email entirely with -MailMethod None (produces the file only).
  Recipient defaults to you for review; add K.Cash etc. via -EmailCc only when you want it to
  go straight out (auto-sending a partner report unreviewed is riskier — left off by default).
+ SharePoint drop prereq: run with -SharePointDir pointing at the USPS library's path ON THIS
+   HOST — either the OneDrive sync-client folder (e.g.
+   "C:\Users\<you>\Delta Freight Systems\DeltaGroup - USPS Monthly Reporting") or a mapped/UNC
+   path to it. Left blank => the drop is skipped (file still lands in -OutDir).
 =====================================================================================
 #>
 param(
@@ -43,7 +52,9 @@ param(
   [string]$EmailTo    = "J.Reynolds@DeltaGroupLog.com",       # recipient — you review, then forward to J.B. Hunt
   [string]$EmailCc    = "",                                   # optional, comma-separated
   [string]$EmailFrom  = "J.Reynolds@DeltaGroupLog.com",       # used only by the Smtp method
-  [string]$SmtpServer = ""                                    # required only by the Smtp method
+  [string]$SmtpServer = "",                                   # required only by the Smtp method
+  # ---- SharePoint drop (a plain filesystem copy on THIS host, not the Claude M365 connector) ----
+  [string]$SharePointDir = ""                                 # locally-synced USPS library path or UNC; blank = skip
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,4 +126,29 @@ if ($MailMethod -ne "None") {
 else {
   "[{0}] DONE. Review then send: {1}" -f (Get-Date), $outXlsx | Tee-Object -FilePath $log -Append
   Write-Host "`nReport ready for review:`n  $outXlsx"
+}
+
+# 4) SHAREPOINT DROP — copy the workbook into the SharePoint USPS folder. This is a plain
+#    Copy-Item on THIS host (the Claude M365 connector is read-only), so -SharePointDir must be
+#    a filesystem path: the OneDrive-synced path of the SharePoint "USPS" library, or a mapped/
+#    UNC path to it. GUARDED like the email step: if unset or unreachable, log and continue so
+#    the run never fails just because the drop location isn't configured yet.
+if ($SharePointDir) {
+  try {
+    if (-not (Test-Path -LiteralPath $SharePointDir)) {
+      New-Item -ItemType Directory -Force -Path $SharePointDir | Out-Null
+    }
+    $spTarget = Join-Path $SharePointDir ("0029H Self Report - Delta Group Logistics - $monLabel.xlsx")
+    Copy-Item -LiteralPath $outXlsx -Destination $spTarget -Force
+    "[{0}] copied to SharePoint folder: {1}" -f (Get-Date), $spTarget | Tee-Object -FilePath $log -Append
+    Write-Host "Dropped into SharePoint USPS folder:`n  $spTarget"
+  }
+  catch {
+    "[{0}] SHAREPOINT DROP SKIPPED: {1}. Workbook remains at: {2}" `
+      -f (Get-Date), $_.Exception.Message, $outXlsx | Tee-Object -FilePath $log -Append
+    Write-Warning "SharePoint drop failed ($($_.Exception.Message)). File is still at: $outXlsx"
+  }
+}
+else {
+  "[{0}] SharePoint drop skipped (-SharePointDir not set)." -f (Get-Date) | Tee-Object -FilePath $log -Append
 }

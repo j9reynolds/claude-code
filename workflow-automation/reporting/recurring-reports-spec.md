@@ -73,6 +73,14 @@ and still leaves the file for manual send, so email begins automatically the fir
 works. Add `-EmailCc` only to send straight to the partner (unreviewed auto-send left off by
 default).
 
+**SharePoint drop (step 5):** the runner also copies the workbook into the SharePoint USPS
+folder via `-SharePointDir`. Because the Claude M365 connector is read-only (`Files.ReadWrite.All`
+is not granted) and a scheduled task can't use it anyway, this is a plain `Copy-Item` on the
+host — point `-SharePointDir` at the USPS library's **locally-synced** path (OneDrive sync
+client, e.g. `C:\Users\<you>\Delta Freight Systems\DeltaGroup - USPS Monthly Reporting`) or a
+mapped/UNC path to it. It is **guarded** like email: if the folder is unset (blank) or
+unreachable, it logs a warning and continues (the file still lands in `output\`).
+
 ```
 python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx
 python3 usps_selfreport_pipeline.py RAW.csv  2026-05 RTH  OUT_overview.xlsx

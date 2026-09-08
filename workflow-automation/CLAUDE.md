@@ -156,6 +156,11 @@ sends the workbook from the HOST (Outlook COM default, or -MailMethod Smtp -Smtp
 NOT the Claude connector — a scheduled task can't use the connector. Guarded try/catch: if mail
 isn't ready it logs + continues (file still produced), so email auto-starts the first month the
 host mailbox works. Default EmailTo=J.Reynolds (review then forward to JBH); -EmailCc for direct.
+SHAREPOINT DROP step added to run_monthly.ps1 (Justin: "also drop it into the SharePoint USPS
+folder each month"): -SharePointDir => Copy-Item the workbook there on the HOST (Claude M365
+connector is read-only: Files.ReadWrite.All FORBIDDEN; scheduled task can't use it anyway). Point
+-SharePointDir at the USPS library's locally-SYNCED path (OneDrive sync client) or a mapped/UNC
+path. Guarded like email: blank/unreachable => logs + continues (file still in output\).
 OUTPUT FILENAME is canonical & single-sourced: report_filename(month) -> "0029H Self Report -
 Delta Group Logistics - <Mon YYYY>.xlsx" (only Mon/YYYY changes = the DATA month). Pipeline's
 4th CLI arg accepts a FOLDER (auto-names) or an explicit .xlsx; run_monthly.ps1 passes the folder.
