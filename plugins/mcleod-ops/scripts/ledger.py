@@ -20,13 +20,20 @@ All commands print a single JSON object on stdout.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+# Decide the locking backend once, here, and record it. Re-testing sys.platform
+# at each call site would let the check drift from the import that actually ran.
+_WINDOWS = sys.platform == "win32"
+if _WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
 TERMINAL_STATUSES = {"done", "failed", "skipped", "escalated"}
 STATUSES = {"claimed", "dispatched", "done", "failed", "skipped", "escalated"}
@@ -51,16 +58,66 @@ def cursors_path() -> Path:
     return state_dir() / "cursors.json"
 
 
+# How long to wait for another agent to release the ledger lock before giving
+# up. Critical sections here are short — a read, or an append — so a wait past
+# this means a crashed holder or a wedged process, not ordinary contention.
+LOCK_TIMEOUT_SECONDS = 30
+
+
+def _acquire(handle) -> None:
+    """Take an exclusive advisory lock on the open lock file."""
+    if not _WINDOWS:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return
+    # Windows has no fcntl. msvcrt.locking works on a byte range starting at the
+    # current position, so pin it to byte 0 and take one byte — the range need
+    # not exist in the file. LK_LOCK already retries for ~10s before raising;
+    # loop to our own deadline so a busy cycle does not fail spuriously.
+    handle.seek(0)
+    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise SystemExit(
+                    f"could not acquire the ledger lock at {handle.name} within "
+                    f"{LOCK_TIMEOUT_SECONDS}s — another agent may still hold it, or a "
+                    "previous one died holding it. Check for a running watch cycle "
+                    "before removing the file."
+                )
+            time.sleep(0.5)
+
+
+def _release(handle) -> None:
+    if not _WINDOWS:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        # Closing the handle drops the lock anyway; a completed ledger write is
+        # not worth failing over a release that reports it held nothing.
+        pass
+
+
 @contextmanager
 def locked():
-    """Serialize readers and writers across concurrently running agents."""
+    """Serialize readers and writers across concurrently running agents.
+
+    POSIX takes an flock; Windows takes an msvcrt byte-range lock. Both are
+    advisory locks on the same `.lock` file, so agents on one machine serialize
+    the same way on either platform.
+    """
     lock = state_dir() / ".lock"
     with open(lock, "a+") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        _acquire(handle)
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            _release(handle)
 
 
 def now() -> str:
