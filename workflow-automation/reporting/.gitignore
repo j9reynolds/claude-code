@@ -1,0 +1,6 @@
+# Python bytecode cache from running the generators/tests
+__pycache__/
+*.pyc
+
+# Local pipeline outputs (generated per-run; not source)
+*.rawrows.csv
