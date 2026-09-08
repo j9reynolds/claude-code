@@ -118,7 +118,12 @@ OTP = real pu.actual_arrival vs sched; OTD = real del.actual_arrival vs sched (b
 reconcile to McLeod). planned dispatch time = when the Rate Confirmation was CREATED
 (order_post_hist posted_type='C', posted_date). actual dispatch time = ROPH = that rate-con time
 MINUS random 55-67 min via NEWID() → Dispatch ~100% by construction & non-deterministic (the only
-synthetic column). Removed the R (RandomArrival) and RDEL (RandomDelivery) CROSS APPLYs from
+synthetic column). DECISION (Justin, 2026-09): keep dispatch RANDOMIZED — do NOT change it.
+Investigated making it real via mcleod_query: McLeod HAS real stop.actual_departure (127/129 pop)
+& real ratecon_created, but NO scheduled-departure target (pickup sched_arrive_late is null).
+Real/deterministic options measured last month (128 delivered): ratecon<=pickup appt = 96%;
+departed<=appt = 4%; departed<=appt+2h = 81%. Justin chose to KEEP the randomized dispatch, so
+leave usps_selfreport_extract.sql dispatch logic as-is (ROPH). Don't re-litigate. Removed the R (RandomArrival) and RDEL (RandomDelivery) CROSS APPLYs from
 usps_selfreport_extract.sql. NOTE: the Aug workbook samples I generated earlier were built from
 Justin's OLD all-randomized export, so their OTP/OTD reflect randomized times; the corrected
 numbers appear when he re-runs the updated SQL. Void→"Order is VOID" all 3 cols. Reason codes
