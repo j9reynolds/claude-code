@@ -126,10 +126,22 @@ constraint, not a detail. **The connector is the only mailbox path that works he
     connector's own `id`, which is mailbox- and folder-scoped. A message moved to Archive
     re-keys under the latter, defeats the claim, and dispatches a second agent at a carrier
     that was already answered. Stripping the brackets also matches what `fetch_mail.py`
-    produces, so the ledger survives an adapter switch.
+    produces, so the ledger survives an adapter switch. **Not hypothetical:** two live pages
+    of this mailbox held 25 rows / 19 distinct Message-IDs and 25 rows / 20 distinct — 6 and 5
+    duplicate folder-copies respectively, including repeats on one in-flight load. Keyed on the
+    connector's `id` those pages would have dispatched 11 redundant agents; keyed on
+    `internetMessageId` the ledger refused every one.
   - **Search returns a truncated preview, not a body.** Routes match on body content (pickup
     city, delivery city, rate), so each surviving message needs a second `read_resource` call
-    on the returned `uri`. Attachments arrive on that same read.
+    on the returned `uri`. Attachments arrive on that same read — and are decided there, not
+    from the search row's `hasAttachments`. **Measured semantics (2026-09-08, three messages
+    both ways):** that flag means *"has at least one NON-inline attachment."* Two messages
+    carrying only inline signature images reported `false` while the full read returned 6 and
+    7 attachments; a report carrying an inline logo plus a real `.xlsx` reported `true`. So a
+    `false` flag does **not** hide a rate con or POD — those are non-inline and set it `true`.
+    Read from the full list anyway: it is what `attachment_handling` (`read_types`,
+    `max_size_mb`) needs, and the flag says nothing about inline content. Low severity; the
+    earlier framing of this as a document-intake miss was wrong and is corrected here.
   - **The search caps at 25 results per request** whatever `limit` asks, and reports it
     (`moreResults` / `nextOffset` / `totalResultCount`). Above `max_events_per_cycle` 25 the
     cycle must page by `offset`, or leave the cursor short and report a coverage gap. Same
@@ -211,6 +223,9 @@ Two read-only paths, both emit the identical CSV `leakage_model.py --csv` consum
 - **PR #7** (MERGED 2026-09-08, merge commit `6f00a76`): branch `claude/m365-bug-fix-pwtvt3`.
   Made the `mcleod-ops` Microsoft 365 mailbox adapter real — see the mailbox-access section
   above. Docs/config only, no executable code; `fetch_mail.py` untouched. CI = Semgrep, green.
+- **PR #9** (MERGED 2026-09-08, merge commit `b46b28a`): the `hasAttachments` note above.
+  Its description was amended after merge to correct an overstated rationale — the merged
+  wording was accurate and unchanged; only the reasoning behind it was wrong.
 - **Review artifact:** https://claude.ai/code/artifact/acd9c1c8-553c-4d80-8062-7667f1a63e38
   (note: artifact wake-subscriptions do NOT register in this session; re-read manually).
 - File map: `README.md` (index), `discovery-findings.md` (7 patterns), `opportunity-backlog.md`
