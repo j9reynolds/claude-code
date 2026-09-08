@@ -24,6 +24,32 @@ only, no money movement; the only outbound action is an email/attachment the sen
   file/console; wiring the Outlook draft is a small add (inject an `outlook_create_draft`
   callable, same pattern as the POD reader).
 
+## Pipeline — extract → generator → filled Overview (BUILT, dependency-free)
+
+`usps_selfreport_pipeline.py` ties the three steps together with **only the Python standard
+library** (no `openpyxl`/`pandas`; `.xlsx` is read and written as zipped XML), so it runs on
+any Delta host with no installs:
+
+1. **EXTRACT** — `extract_raw_rows(path)` reads the J.B. Hunt raw extract. From an `.xlsx` it
+   scans every sheet, finds any carrying an `O/D PAIR` header (one combined tab, or per-lane
+   tabs), and pulls the normalized per-load rows; it also accepts a `.csv`. Writes an audit
+   CSV of exactly what it aggregated.
+2. **GENERATE** — `report_usps_self_report.build_report()` (the verified aggregation).
+3. **FILL** — `write_overview_xlsx()` writes a filled **Overview** `.xlsx` (Lane | Load Count
+   | OTP | OT Dispatch | OTD | Comments, per-lane A–Z + TOTAL), percentages as real Excel `%`
+   cells — ready for the owner to review and send.
+
+```
+python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx
+python3 usps_selfreport_pipeline.py RAW.csv  2026-05 RTH  OUT_overview.xlsx
+```
+
+**Verified end-to-end on real data:** run against May 2026's raw tab, the pipeline
+(extract → generate → write `.xlsx` → read back) reproduces the filed Overview with **0
+differences** across all 27 lanes. Tests: `test_usps_selfreport_pipeline.py` (6) +
+`test_report_usps_self_report.py` (10). Open the output once in Excel to confirm formatting
+before the first real send.
+
 ## The USPS Self Report — what it actually is
 
 | Attribute | Value |

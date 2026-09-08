@@ -123,6 +123,19 @@ sorted A-Z. `report_usps_self_report.py` (10/10 tests) consumes the raw extract 
 `report_usps_self_report.sql` is now an OPTIONAL McLeod cross-check (map JBH Load ID→McLeod
 order, compare Delta's times to JBH's), NOT the report source. My earlier McLeod-timestamp
 approach was the WRONG source/method and would have produced different numbers.
+PIPELINE BUILT: `usps_selfreport_pipeline.py` = extract→generate→filled Overview, STDLIB ONLY
+(reads/writes .xlsx as zipped XML via zipfile+ElementTree; NO openpyxl/pandas — pip is blocked
+here and none are installed, so stdlib is the right call and runs install-free on any Delta
+host). extract_raw_rows() scans every sheet for an 'O/D PAIR' header (combined or per-lane
+tabs) or reads a .csv; write_overview_xlsx() emits Lane|Load Count|OTP|OT Dispatch|OTD|Comments
++ TOTAL with builtin %-format (numFmtId 9). VERIFIED end-to-end on real May data:
+extract→generate→write .xlsx→read back = 0 diffs vs filed Overview (27 lanes). Tests: pipeline
+6 + generator 10. CLI: `python3 usps_selfreport_pipeline.py RAW.xlsx|.csv YYYY-MM PROGRAM OUT.xlsx`.
+AUG FILE (opened via decoding the share token → item GUID → file:///{driveId}/{guid}) had NO
+usable Aug raw data — hidden tabs were stale 2024 templates for other lanes; Overview values
+were pasted (formulas ref a missing 'RTH Raw Data' tab). Aug per-lane audit: 20 lanes/97 loads,
+totals reconcile to the unweighted-mean method (Dispatch 99.80% exact), 0 impossible cells; a
+true mine-vs-theirs per-lane diff still needs the Aug raw JBH extract.
 .xlsb READ LIMIT: Graph read_resource CANNOT open .xlsb — VALIDATION_ERROR unsupported_mime
 'application/vnd.ms-excel.sheet.binary.macroenabled.12' (allow-list has .xls/.xlsx only).
 Re-save as .xlsx to read cells (that's how May was read). OneDrive read path works: get_me →
