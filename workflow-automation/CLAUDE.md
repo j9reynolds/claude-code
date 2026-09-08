@@ -31,37 +31,66 @@ live: the **"DGL Command Center"** (in-house TMS, AI quoting, account-health, tr
 3. **Never fabricate figures.** No invented dollar amounts (e.g. "Delta lost $X"). Real
    numbers require real data from McLeod.
 
-## McLeod access — via the `dgl-mcp` connector (READ tools; live as of 2026-09-04)
+## McLeod access — via the `dgl-mcp` connector (READ tools; caps lifted + deployed 2026-09-08)
 
 The PM added a first-party MCP connector **`dgl-mcp`** that reaches McLeod (LME_1720). Read
-tools available: `search_orders` (cap 50, newest by ordered_date), `get_order`
+tools available: `search_orders` (pageable — see below), `get_order`
 (header + stops, real appointment + actual times, `otherchargetotal` LUMP), `get_movement`
 (carrier, `override_pay_amt`, `rate_confirmation_status`/`_sent_date`), `get_customer`,
 `get_carrier` (payee⋈drs_payee), `get_image` (BOL/POD from DocumentPower), `list_comments`,
-`resolve_identifier`. WRITE tool `create_comment` exists — **do not call without explicit
-authorization.**
+`resolve_identifier`, **`mcleod_query`** (arbitrary read-only SELECT). WRITE tool
+`create_comment` exists — **do not call without explicit authorization.**
 
-Connector limits (why it's not a bulk analytics source) — **fixed in code, NOT yet deployed**:
-- `search_orders` capped at 50 rows → cannot page the whole ~tens-of-thousands-of-loads book.
-- `get_order` returns `otherchargetotal` as a **lump** (accessorials+fuel mixed), not
-  itemized line items — customer-accessorial billing isn't separable from the connector alone.
+The old blocking limits — `search_orders` hard-capped at 50 rows, and no way to break the
+`otherchargetotal` lump apart — are **gone as of 2026-09-08**. `DGL_McLeod_MCP#3` (+ CI in the
+same PR, + `#4` fixing `update-mcp.ps1`) is merged to `master`, deployed via `update-mcp.ps1`,
+and **verified against live db02**:
+- `search_orders` **pages**: `limit` + `offset`, `ORDER BY ordered_date DESC, id DESC`, with
+  `has_more`/`next_offset` measured by fetching one row past the page. Verified live: 200 rows
+  in one call, `offset:200` continuing with no overlap or gap.
+- `get_carrier`, `get_customer`, `list_comments` take `limit` (`TOP (@limit)`).
+- **`mcleod_query`** runs a caller-supplied SELECT — aggregates, joins, whole-book scans, and
+  the `other_charge` breakdown the lump hides. Values bind via a `parameters` JSON object;
+  never concatenate. Response carries `columns`, `rows`, `row_count`, `elapsed_ms`, and a
+  `truncated` flag measured by reading one row past the cap.
+- **Effective caps: default 200 rows, max 1000.** The deployed `appsettings.json` carries none
+  of the new `Mcp:MaxRows`/`DefaultRows`/`QueryTimeoutSeconds` keys (`update-mcp.ps1` preserves
+  it), so the in-code fallbacks apply — confirmed live by `max_rows:200`/`max_limit:1000` in a
+  real response. Raising them is an appsettings edit, not a code change.
+- Read-only rests on three layers: `db_datareader` on lme_1720, `ApplicationIntent=ReadOnly`,
+  and a free-form guard. Verified live: `UPDATE orders SET status = 'V'` returned
+  `"McLeodSql is read-only: only SELECT statements are permitted."` and never reached db02.
+  Every `mcleod_query` call, refused ones included, is audit-logged to the `read_audit` table.
 
-**MERGED to `master`: `j9reynolds/DGL_McLeod_MCP#3`** (2026-09-07) removes both limits **in
-code**. Merged is not deployed — the running service only changes when `update-mcp.ps1` does:
-- Row caps become parameters clamped to a deployed maximum (`Mcp:MaxRows` default 1000);
-  `search_orders` pages with `limit`/`offset` and reports `has_more`/`next_offset`.
-- New `mcleod_query` tool runs an arbitrary read-only SELECT — aggregates, joins, whole-book
-  scans, and the `other_charge` breakdown the lump `otherchargetotal` hides. Read-only rests on
-  `db_datareader` + `ApplicationIntent=ReadOnly` + a free-form guard; every call is audit-logged
-  to a new `read_audit` table.
-- Tested against a fake reader only (78 tests, green in the repo's new CI) — **never executed
-  against db02**. Before/at deploy, smoke-test `search_orders` with `limit`/`offset` and one
-  `mcleod_query` (e.g. `SELECT TOP 5 charge_id, LTRIM(RTRIM(descr)) AS descr, amount FROM
-  other_charge`, which also answers the open `other_charge` codes question).
-- **Until `update-mcp.ps1` has run, the deployed connector still has the 50-row cap and no
-  `mcleod_query`** — so the bulk-export path below is still the live plan. Once deployed, the
-  365-day leakage extract can run through `mcleod_query` instead of needing a dev to run SQL
-  on-network.
+**`other_charge` codes — partially answered (2026-09-08).** A live `mcleod_query` returned
+`FSC` = Fuel Surcharge and `STP` = Stop. So fuel and accessorials ARE separable per-code; the
+lump was a connector limitation, not a schema one. The full code set is still to be enumerated
+— run this and record the result here:
+```sql
+SELECT charge_id, LTRIM(RTRIM(descr)) AS descr, COUNT(*) AS n, SUM(amount) AS total
+FROM other_charge GROUP BY charge_id, LTRIM(RTRIM(descr)) ORDER BY SUM(amount) DESC
+```
+Expect Detention / TONU / Layover / Lumper to appear as their own codes and map onto
+`customer-accessorial-rate-sheet.md` (`STP` ↔ its Stopoff row).
+
+**Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
+- The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It
+  was set to the UPN `J.Reynolds@DeltaGroupLog.com`; SCM cannot resolve that, so the service
+  failed to start with *"The account name is invalid or does not exist, or the password is
+  invalid"* and stayed down for ~40h. Symptom chain: service Stopped → nothing on
+  `127.0.0.1:8092` → healthy `cloudflared` forwards to a dead origin → **502 at
+  `mcp.dglops.com`** → claude.ai reports "Couldn't register with dgl-mcp's sign-in service".
+  A 502 there means check the SERVICE first, not Cloudflare/WAF/DNS. It must stay that account
+  — the ws API credentials live in that user's Windows Credential Manager.
+- Changing service config needs **local admin on the box**. Entra/M365 Global Admin does NOT
+  grant it — the box is AD domain-joined; local Administrators holds `Delta\Admins Brongus`,
+  `Delta\Admins Brongus L1`, `Delta\Domain Admins`. Check with `whoami /groups`.
+- `dotnet test` at the repo root fails (`MSB1003`) on any SDK below 9.0.200 because of the
+  `.slnx` solution file — always name the test project. `#4` fixed `update-mcp.ps1` for this;
+  the repo also now has CI (`.github/workflows/ci.yml`) running the suite on every push and PR.
+- After a redeploy, an already-connected client keeps the OLD tool list until it re-handshakes.
+  New *parameters* pass through to the server, but a new *tool* is invisible until reconnect —
+  reconnect the connector (or start a fresh session) before concluding a deploy failed.
 
 Confirmed real schema (from connector responses): `orders`(id, customer_id, status
 [D=delivered/A/V/P], on_hold, curr_movement_id, freight_charge, otherchargetotal,
@@ -74,10 +103,14 @@ max_buy, rate_confirmation_status, rate_confirmation_sent_date); carrier = `paye
 Direct SQL to DB02 and the McLeod REST API remain unreachable from the sandbox (no route;
 egress proxy 403s non-allowlisted hosts) — the connector is the only in-session path.
 
-## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT
+## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT (premise now obsolete — PM to confirm)
 
 PM chose the full 365-day, all-customers figure via bulk export (not a connector sample),
-because the connector can't page the whole book. Deliverable: `mcleod-extract/
+because the connector can't page the whole book. **That premise no longer holds** — since
+2026-09-08 the connector pages and `mcleod_query` runs arbitrary aggregates, so the 365-day
+extract can run through the connector without a dev running SQL on-network. Aggregating in SQL
+beats paging 1000 rows at a time. The bulk-export path below still works and is unchanged;
+switching is the PM's call, not an automatic consequence. Deliverable: `mcleod-extract/
 mcleod_leakage_extract.sql` (now hardened with the connector-confirmed schema; only
 `other_charge` codes + the carrier-charge table left to confirm via its discovery block) →
 run on DB02 (fastest: the dev who built `dgl-mcp` already has the connection) → CSV →
@@ -151,8 +184,11 @@ read access is the keystone — it unblocks #1, #3, #4, #5, #6.**
 
 ## Open decisions / next steps (waiting on the user)
 
-1. **Get McLeod data:** run an extractor on-network → send `loads_365d.csv`, OR add McLeod
-   as a first-party connector. Then compute the real leakage number + finalize the rate sheet.
+1. **Get McLeod data — no longer blocked on access.** The connector now pages and runs
+   arbitrary read-only SQL, so the 365-day figure can be aggregated through `mcleod_query`
+   instead of waiting on an on-network extractor + `loads_365d.csv`. Next concrete step: run
+   the `other_charge` GROUP BY above, record the code list, then compute the real leakage
+   number and finalize the rate sheet. The bulk-export path remains available if preferred.
 2. **Provide the signed-Rate-Confirmation image type number** (counterpart to temp POD = 4).
 3. **Provide the role/permission map** (who is MANAGER/ADMIN/SUPER_ADMIN) to wire the override.
 4. **Go/no-go on the staff announcement** (`employee-announcement.md`) before anything live.
