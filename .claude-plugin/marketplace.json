@@ -1,11 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "claude-code-plugins",
+  "name": "dgl-plugins",
   "version": "1.0.0",
-  "description": "Bundled plugins for Claude Code including Agent SDK development tools, PR review toolkit, and commit workflows",
+  "description": "Delta Group Logistics plugin marketplace, carried in this fork of claude-code. Includes the upstream Anthropic plugins plus DGL's own mcleod-ops.",
   "owner": {
-    "name": "Anthropic",
-    "email": "support@anthropic.com"
+    "name": "Justin Reynolds",
+    "email": "justinreynolds916w@gmail.com"
   },
   "plugins": [
     {

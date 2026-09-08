@@ -20,11 +20,16 @@ The watcher is read-only. It never sends email and never writes to McLeod — it
 
 ## Install
 
-From this repository's marketplace:
+From this repository's marketplace — add it first, then install:
 
 ```
-/plugin install mcleod-ops@claude-code-plugins
+/plugin marketplace add j9reynolds/claude-code
+/plugin install mcleod-ops@dgl-plugins
 ```
+
+The marketplace is named `dgl-plugins`, not `claude-code-plugins`: that name is reserved for
+official marketplaces under `github.com/anthropics/`, and a fork that keeps it is refused at
+`marketplace add` time.
 
 Then copy the configuration into your project and fill it in:
 
