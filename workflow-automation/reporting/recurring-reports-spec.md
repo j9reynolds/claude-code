@@ -62,8 +62,16 @@ schtasks /Create /TN "USPS Self Report" /SC MONTHLY /D 1 /ST 06:00 ^
 ```
 
 Prereqs: `Import-Module SqlServer`, Python 3 on PATH, the three files co-located. The runner
-aborts on zero rows and logs each step; **the owner still reviews and sends** (no auto-send).
-Delivery via Outlook is blocked today anyway — the M365 connector lacks `Mail.Send`.
+aborts on zero rows and logs each step.
+
+**Email delivery (step 4):** the runner emails the workbook to `-EmailTo` (default: J.Reynolds,
+for review before forwarding to J.B. Hunt) **from the host** — Outlook desktop COM by default,
+or an SMTP relay (`-MailMethod Smtp -SmtpServer …`), or off (`-MailMethod None`). This is NOT
+the Claude M365 connector (a scheduled task can't use it); "once M365 is fixed" means the
+host's Outlook/mail path works. The step is **guarded**: if mail isn't ready it logs a warning
+and still leaves the file for manual send, so email begins automatically the first month it
+works. Add `-EmailCc` only to send straight to the partner (unreviewed auto-send left off by
+default).
 
 ```
 python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx

@@ -151,7 +151,11 @@ hardcoded "RTH Performance Overview (by Lane)"/"(by TripID)". Raw Data tab: top 
 3 Y/N cols (ON TIME Arrival/Dispatch on time/ON TIME DELIVERY) CENTERED; every cell = "Y" gets
 fill #FFCCCC + font #FF0000 bold (styles: s8 centered, s9 Y-highlight). MONTHLY RUN WIRED:
 run_monthly.ps1 (Invoke-Sqlcmd DB02/LME_1720 → Export-Csv → pipeline → styled xlsx in output\;
-Task Scheduler day 1). Owner still reviews/sends (M365 Mail.Send not granted).
+Task Scheduler day 1). EMAIL step added to run_monthly.ps1 (Justin wants it emailed to him monthly once M365 works):
+sends the workbook from the HOST (Outlook COM default, or -MailMethod Smtp -SmtpServer, or None),
+NOT the Claude connector — a scheduled task can't use the connector. Guarded try/catch: if mail
+isn't ready it logs + continues (file still produced), so email auto-starts the first month the
+host mailbox works. Default EmailTo=J.Reynolds (review then forward to JBH); -EmailCc for direct.
 OUTPUT FILENAME is canonical & single-sourced: report_filename(month) -> "0029H Self Report -
 Delta Group Logistics - <Mon YYYY>.xlsx" (only Mon/YYYY changes = the DATA month). Pipeline's
 4th CLI arg accepts a FOLDER (auto-names) or an explicit .xlsx; run_monthly.ps1 passes the folder.
