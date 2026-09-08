@@ -105,7 +105,7 @@
     {
       "name": "mcleod-ops",
       "description": "Watches McLeod TMS and the operations mailbox, classifies activity into freight workflows, and dispatches a specialist agent per workflow — building new handler agents as new patterns recur",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Justin Reynolds",
         "email": "justinreynolds916w@gmail.com"
