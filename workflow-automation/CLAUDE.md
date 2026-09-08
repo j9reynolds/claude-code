@@ -170,7 +170,10 @@ workbook: Title/Subject/Tags = "0029H Self Report - Delta Group Logistics", Comp
 "U.S. Postal Service" via docProps/core.xml + app.xml. NOTE: a USPS-internal program code
 (the four-letter tag the USPS rep left in the original template's title + file metadata) was
 leaked to Delta and PURGED from the whole project per Justin — never reintroduce that or any
-USPS-internal book code into the workbook, its docProps, docs, or filenames.) Read the template colors via: decode
+USPS-internal book code into the workbook, its docProps, docs, or filenames. DEFERRED (Justin
+said "just save to memory", not now): scrubbing that same leaked code from the OLD already-filed
+.xlsb reports' document properties — every NEWLY generated report is already clean, so this is
+an optional cleanup of historical files only, to do if/when Justin asks.) Read the template colors via: decode
 share token→GUID, read sheetNNN.htm (has class names only), colors are in linked stylesheet.css
 which the connector BLOCKS (text/css not allowed) and can't copy (Files.ReadWrite not granted) —
 so Justin supplied hexes manually. .mht won't convert (406).
