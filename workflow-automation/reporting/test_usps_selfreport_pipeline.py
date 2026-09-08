@@ -233,6 +233,29 @@ def test_formatting_merge_freeze_and_yhighlight():
                 os.remove(p)
 
 
+def test_report_filename_canonical():
+    assert P.report_filename("2026-03") == "0029H Self Report - Delta Group Logistics - Mar 2026.xlsx"
+    assert P.report_filename("2026-08") == "0029H Self Report - Delta Group Logistics - Aug 2026.xlsx"
+
+
+def test_run_into_folder_auto_names_by_data_month():
+    path = _tmp(".csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["O/D PAIR", "ON TIME Arrival Y/N", "Dispatch on time Y/N", "ON TIME DELIVERY y/n"])
+        w.writerow(["A, X | B, Y", "Y", "N", "Y"])
+    outdir = tempfile.mkdtemp()
+    try:
+        report, meta = P.run(path, "2026-03", "RTH", outdir)          # pass a FOLDER
+        expected = os.path.join(outdir, "0029H Self Report - Delta Group Logistics - Mar 2026.xlsx")
+        assert meta["output"] == expected and os.path.exists(expected)
+    finally:
+        os.remove(path)
+        for f in os.listdir(outdir):
+            os.remove(os.path.join(outdir, f))
+        os.rmdir(outdir)
+
+
 def test_extract_from_csv():
     path = _tmp(".csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:

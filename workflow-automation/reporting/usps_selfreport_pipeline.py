@@ -21,20 +21,41 @@ with no installs — pip is not required):
 common shapes Excel produces (shared strings, inline strings, plain numbers). Open the
 output once in Excel to confirm formatting before the first real send.
 
-CLI:
-  python3 usps_selfreport_pipeline.py RAW.xlsx 2026-08 GEGW OUT_overview.xlsx
-  python3 usps_selfreport_pipeline.py RAW.csv  2026-08 RTH  OUT_overview.xlsx
+CLI (4th arg is an output file OR a folder — a folder auto-names the file canonically
+"0029H Self Report - Delta Group Logistics - <Mon YYYY>.xlsx", where <Mon YYYY> is the data
+month):
+  python3 usps_selfreport_pipeline.py RAW.csv 2026-03 RTH  ./output          # -> ...Mar 2026.xlsx
+  python3 usps_selfreport_pipeline.py RAW.csv 2026-03 RTH  MyReport.xlsx      # explicit name
 """
 
 from __future__ import annotations
 
 import csv
+import os
 import re
 import sys
 import zipfile
+from datetime import datetime
 from xml.etree import ElementTree as ET
 
 import report_usps_self_report as R
+
+# Canonical output name — only the "<Mon YYYY>" (the data month) ever changes.
+FILENAME_PREFIX = "0029H Self Report - Delta Group Logistics - "
+
+
+def report_filename(month):
+    """'2026-03' -> '0029H Self Report - Delta Group Logistics - Mar 2026.xlsx'."""
+    return FILENAME_PREFIX + datetime.strptime(month, "%Y-%m").strftime("%b %Y") + ".xlsx"
+
+
+def _resolve_out(out, month):
+    """If `out` is a directory (or lacks an .xlsx name), write the canonically-named file
+    inside it; otherwise use `out` verbatim."""
+    if out.lower().endswith(".xlsx") and not os.path.isdir(out):
+        return out
+    os.makedirs(out, exist_ok=True)
+    return os.path.join(out, report_filename(month))
 
 _NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
@@ -486,6 +507,9 @@ def run(raw_path, month, program, out_xlsx, raw_csv_out=None):
     rows, meta, raw_table = extract_raw_rows(raw_path)
     if not rows:
         raise SystemExit(f"No raw rows found in {raw_path} (need an 'O/D PAIR' column).")
+    # If a directory (or non-.xlsx) is given, name the file canonically for the data month.
+    out_xlsx = _resolve_out(out_xlsx, month)
+    meta["output"] = out_xlsx
     # write the normalized raw CSV (audit trail / generator input)
     tmp_csv = raw_csv_out or (out_xlsx + ".rawrows.csv")
     with open(tmp_csv, "w", newline="", encoding="utf-8") as fh:
@@ -508,4 +532,4 @@ if __name__ == "__main__":
     print(R.render_text(rep))
     print(f"\nextract: {meta['count']} raw rows from {meta['source']} "
           f"{[s['sheet'] + ':' + str(s['rows']) for s in meta['sheets']] or ''}")
-    print(f"workbook written (3 tabs: by Lane, by Trip, Raw Data): {out}")
+    print(f"workbook written (3 tabs: by Lane, by Trip, Raw Data): {meta['output']}")

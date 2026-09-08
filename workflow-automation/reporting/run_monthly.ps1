@@ -40,6 +40,7 @@ if (-not $Month) { $Month = (Get-Date).AddMonths(-1).ToString("yyyy-MM") }
 $monLabel = [datetime]::ParseExact($Month, "yyyy-MM", $null).ToString("MMM yyyy")   # e.g. "Aug 2026"
 $stamp    = Get-Date -Format "yyyyMMdd_HHmmss"
 $rawCsv   = Join-Path $OutDir "rawrows_$stamp.csv"
+# The pipeline names the workbook canonically from the data month; this is the expected path.
 $outXlsx  = Join-Path $OutDir "0029H Self Report - Delta Group Logistics - $monLabel.xlsx"
 $log      = Join-Path $OutDir "run_$stamp.log"
 
@@ -53,10 +54,11 @@ $rows = (Import-Csv $rawCsv).Count
 "[{0}] extracted {1} rows -> {2}" -f (Get-Date), $rows, $rawCsv | Tee-Object -FilePath $log -Append
 if ($rows -eq 0) { throw "No rows returned from the extract — aborting (check the month/customer)." }
 
-# 2) GENERATE + STYLE
-"[{0}] generate: {1}" -f (Get-Date), $outXlsx | Tee-Object -FilePath $log -Append
-& python $pipeline $rawCsv $Month $Program $outXlsx 2>&1 | Tee-Object -FilePath $log -Append
+# 2) GENERATE + STYLE — pass the FOLDER; the pipeline names the file canonically for $Month.
+"[{0}] generate into: {1}" -f (Get-Date), $OutDir | Tee-Object -FilePath $log -Append
+& python $pipeline $rawCsv $Month $Program $OutDir 2>&1 | Tee-Object -FilePath $log -Append
 if ($LASTEXITCODE -ne 0) { throw "pipeline failed (exit $LASTEXITCODE) — see $log" }
+if (-not (Test-Path $outXlsx)) { throw "expected workbook not found: $outXlsx (see $log)" }
 
 "[{0}] DONE. Review then send: {1}" -f (Get-Date), $outXlsx | Tee-Object -FilePath $log -Append
 Write-Host "`nReport ready for review:`n  $outXlsx"

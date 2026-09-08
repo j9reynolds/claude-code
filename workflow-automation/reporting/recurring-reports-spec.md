@@ -51,8 +51,10 @@ any Delta host with no installs:
 A PowerShell runner schedules the whole chain on a Delta host that can reach McLeod:
 `Invoke-Sqlcmd` runs `usps_selfreport_extract.sql` against `DB02/LME_1720` (the SQL scopes to
 last calendar month) → `Export-Csv` → `usps_selfreport_pipeline.py` → the styled workbook in
-`output\`, named `0029H Self Report - Delta Group Logistics - <Mon YYYY>.xlsx`. Schedule it for
-the 1st via Task Scheduler:
+`output\`. **Filename is canonical** — always `0029H Self Report - Delta Group Logistics -
+<Mon YYYY>.xlsx`, where only `<Mon YYYY>` changes to the data month (`report_filename()` in the
+pipeline; pass a folder as the 4th arg and it auto-names). Schedule it for the 1st via Task
+Scheduler:
 
 ```
 schtasks /Create /TN "USPS Self Report" /SC MONTHLY /D 1 /ST 06:00 ^
