@@ -154,6 +154,55 @@ constraint, not a detail. **The connector is the only mailbox path that works he
 - **Known coverage gap:** the window filters on `receivedDateTime`, so the cycle sees messages
   as they arrive — not edits, moves, deletes, or Sent Items. A reply a human already sent by
   hand is invisible, so the watcher can route an already-answered thread.
+- **Never scope the mailbox query to a folder.** Measured live 2026-09-08: an Inbox-scoped
+  search returned **1** message where the unscoped search returned **47**, because Outlook
+  rules file most ops mail out of Inbox before anyone reads it. A `folderName` parameter on
+  the watch query would silently hide ~98% of the desk. The `folders` key in `sources.json`
+  is set to `"*"` as a marker meaning unscoped; it is not a folder name and must not be
+  turned into a query parameter.
+
+
+## First live watch cycle — 2026-09-08, `observe` (the pilot's first real run)
+
+`/ops-watch` ran end to end on the PM's Windows box against the real desk. **105 events
+claimed, 6 handlers dispatched, 3 escalated, every cursor advanced, 21m17s.** Nothing was
+sent, drafted, or written to McLeod — routes were lowered to `observe` for the first cycles
+(they ship at `draft`; raise them back one at a time). This is the first evidence the whole
+chain works on live traffic, and it produced findings the desk did not already have.
+
+**Control gaps confirmed with real orders — the rate-con gate is not being recorded.** The
+contract's "signed rate con returned in real time" requirement showed up unmet on live loads
+in a single cycle: two orders **BOOKED with the rate con not marked sent** (0199620, 0199505),
+and on 0199505 the carrier pay ran **$227.50 over max buy** with none of the customer's stated
+requirements (fuel, GPS/SensiTech, straps, dock-high) verifiable in McLeod. This is the same
+control gap first seen on order 0197341 — no longer a single observation.
+
+**A cargo-security signal the desk had not surfaced.** On one cross-border order (0199276) a
+carrier sales rep noticed the tractor was one colour at pickup and a different colour in the
+inspection-station photos. Treated as a possible **wrong-truck or double-brokering** signal
+pending verification against the rate con and the carrier's insurance. Recording the *pattern*
+here because it is the kind of thing the watcher is worth having for: nobody was looking at
+pickup photos and inspection photos side by side.
+
+**Rate-quote volume is the dominant inbound shape.** 22 rate-quote messages in ~50 minutes
+(load boards, brokers, and the freight-forwarder account), plus 4 USPS auction notices. The
+watcher deliberately did **not** propose a new handler agent — it proposed pointing the
+existing `rate-quote` route at the **DGL Command Center's** mailbox-intake and
+quote-recommendation pipeline, which already handles this shape. Reuse over build; matches
+backlog item #3. Needs a real handoff point, not just a route edit. Nothing written to
+`routes.json`.
+
+**Do NOT add a blanket ignore rule for the company's own domain.** The cycle flagged 7
+internal staff replies that matched no route, and an ignore rule was floated. Rejected:
+internal-outbound is exactly where staff **commit money** — an earlier read of the same
+mailbox caught two rate commitments to a customer ($2,350 and $2,650) that were internal
+replies and would have been discarded by such a rule. If volume needs cutting, ignore named
+automated senders, never the company domain. A route that *records* commitments is the right
+answer.
+
+**Operational note:** a connector named `mcleod` refused connection during the cycle; the
+`dgl-mcp` tools covered McLeod and the cycle completed. `sources.json` names `dgl-mcp`, which
+is correct — do not "fix" it to `mcleod`.
 
 ## Leakage number — path chosen: WHOLE-BOOK BULK EXPORT (premise now obsolete — PM to confirm)
 
@@ -251,6 +300,12 @@ read access is the keystone — it unblocks #1, #3, #4, #5, #6.**
 3. **Provide the role/permission map** (who is MANAGER/ADMIN/SUPER_ADMIN) to wire the override.
 4. **Go/no-go on the staff announcement** (`employee-announcement.md`) before anything live.
 5. After #1: start quick wins #5/#6 and enabler #7.
+6. **Rate-quote route — wire it to the Command Center pipeline** (the watcher's proposal, see
+   the first-live-cycle section). Decide the handoff point; a route edit alone points at a
+   pipeline that does not know it is being fed.
+7. **Raise routes off `observe` one at a time** as each handler earns trust. All 8 are
+   `observe` today; 6 of them ship at `draft`. The restore list is in the
+   `_autonomy_override` comment at the top of the live `routes.json`.
 
 ## SQL conventions for McLeod (LME_1720) — ALWAYS follow
 
