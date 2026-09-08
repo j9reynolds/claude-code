@@ -214,7 +214,7 @@ def test_formatting_merge_freeze_and_yhighlight():
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(hdr)
-        w.writerow(["A, X | B, Y", "Y", "N", "Y"])          # 2 Y cells, 1 N cell
+        w.writerow(["A, X | B, Y", "Y", "N", "Y"])          # 1 N cell, 2 non-N cells
     out = _tmp(".xlsx")
     try:
         P.run(path, "2026-08", "GEGW", out)
@@ -225,8 +225,8 @@ def test_formatting_merge_freeze_and_yhighlight():
         assert 'mergeCell ref="A1:F1"' in s1                # by-Lane title merged
         assert 'mergeCell ref="A1:G1"' in s2                # by-Trip title merged
         assert 'state="frozen"' in s3 and 'ySplit="1"' in s3  # Raw Data top row frozen
-        assert s3.count('s="9"') == 2                       # two "Y" cells highlighted
-        assert s3.count('s="8"') == 1                       # one non-Y cell centered
+        assert s3.count('s="9"') == 1                       # one "N" cell highlighted
+        assert s3.count('s="8"') == 2                       # two non-N cells centered
     finally:
         for p in (path, out, out + ".rawrows.csv"):
             if os.path.exists(p):

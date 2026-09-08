@@ -274,7 +274,7 @@ _STYLES_XML = (
     '<xf numFmtId="10" fontId="2" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'  # 6 total %
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 7 raw data (left)
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 8 raw Y/N centered
-    '<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 9 raw "Y" (pink fill, red bold, centered)
+    '<xf numFmtId="0" fontId="4" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 9 raw "N" (pink fill, red bold, centered)
     '</cellXfs></styleSheet>'
 )
 
@@ -416,7 +416,7 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
 
     # ---- Sheet 3: Raw Data With Reason Codes (verbatim export) ----
     rh = raw_table.get("header") or ["lane", "otp_flag", "dispatch_flag", "otd_flag", "reason1", "load_id"]
-    # the three on-time Y/N columns -> centered; any cell that equals "Y" -> pink fill/red bold
+    # the three on-time Y/N columns -> centered; any cell that equals "N" -> pink fill/red bold
     _YN = {"on time arrival y/n", "dispatch on time y/n", "on time delivery y/n"}
     yn_cols = {i for i, h in enumerate(rh) if (h or "").strip().lower() in _YN}
     s3 = ['<row r="1">' + "".join(_cx(i + 1, 1, s=2, text=h) for i, h in enumerate(rh)) + "</row>"]
@@ -425,7 +425,7 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         for i, v in enumerate(rvals):
             txt = "" if v is None else str(v)
             if i in yn_cols:
-                st = 9 if txt.strip() == "Y" else 8          # 9 = pink/red bold "Y", 8 = centered
+                st = 9 if txt.strip() == "N" else 8          # 9 = pink/red bold "N", 8 = centered
             else:
                 st = 7
             cells.append(_cx(i + 1, ri, s=st, text=txt))
