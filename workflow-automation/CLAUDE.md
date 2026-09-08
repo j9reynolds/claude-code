@@ -137,6 +137,15 @@ build_workbook_xlsx(out, report, rows, raw_table, program); extract_raw_rows now
 (rows, meta, raw_table) and rows carry sv_trip_id. _cx col is 1-based. Verified on Aug export:
 3 tabs, TripID lists match the real template (e.g. Champaign ('27D0A,'27482,'27F6D,'28044,'286AB)).
 Can't verify Excel opens w/o repair from sandbox (no Excel) — ask Justin to confirm. Tests 8+10.
+TEMPLATE PALETTE (confirmed by Justin, baked into styles.xml): font Cambria 11; TITLE bar + HEADER
+row = black fill #000000 with WHITE bold text #FFFFFF; DATA rows = no fill, black #000000 Cambria;
+TOTAL row = fill #BFBFBF, black bold; borders thin #000000; lane % = 0% (whole), total % = 0.00%.
+Title bar spans the full row width. (Template's by-Lane title literally reads "RTH Performance
+Overview (by Lane)" even on USPS/GEGW — I generate "{program} Performance Overview (by Lane)";
+program arg controls it — open Q whether to hardcode RTH.) Read the template colors via: decode
+share token→GUID, read sheetNNN.htm (has class names only), colors are in linked stylesheet.css
+which the connector BLOCKS (text/css not allowed) and can't copy (Files.ReadWrite not granted) —
+so Justin supplied hexes manually. .mht won't convert (406).
 EXACT METHOD (generator matches workbook COUNTIF/COUNTIFS): Load Count = all rows incl VOID;
 OTP%/Dispatch%/OTD% = count(flag=="Y")/Load Count as ONE rounded % (report shows "89%", not
 counts) — a VOID row is in the denominator, never a Y, so it lowers the lane %; TOTAL row % =

@@ -240,32 +240,35 @@ def _col_letter(idx):
 
 RAW_SHEET = "Raw Data With Reason Codes"     # the Overview/by-Trip formulas reference this
 
-# style indices (see _STYLES_XML): 0 default, 1 title, 2 header, 3 data, 4 data%,
-# 5 total, 6 total%, 7 raw-data text
+# Palette matched to the filed template (Cambria; black title/header bars with white bold
+# text; #BFBFBF bold total row; black thin borders; whole-% on lanes, 0.00% on totals).
+# style indices: 0 default, 1 title, 2 header, 3 data, 4 data%, 5 total, 6 total%, 7 raw-data
 _STYLES_XML = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-    '<fonts count="2">'
-    '<font><sz val="11"/><name val="Calibri"/></font>'
-    '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-    '<fills count="3">'
+    '<fonts count="3">'
+    '<font><sz val="11"/><color rgb="FF000000"/><name val="Cambria"/></font>'                       # 0 body black
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Cambria"/></font>'                    # 1 white bold (title/header)
+    '<font><b/><sz val="11"/><color rgb="FF000000"/><name val="Cambria"/></font></fonts>'            # 2 black bold (total)
+    '<fills count="4">'
     '<fill><patternFill patternType="none"/></fill>'
     '<fill><patternFill patternType="gray125"/></fill>'
-    '<fill><patternFill patternType="solid"><fgColor rgb="FFD9E1F2"/><bgColor indexed="64"/></patternFill></fill>'
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF000000"/><bgColor indexed="64"/></patternFill></fill>'   # 2 black
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFBFBFBF"/><bgColor indexed="64"/></patternFill></fill>'   # 3 gray
     '</fills>'
     '<borders count="2"><border/>'
-    '<border><left style="thin"><color rgb="FFBFBFBF"/></left><right style="thin"><color rgb="FFBFBFBF"/></right>'
-    '<top style="thin"><color rgb="FFBFBFBF"/></top><bottom style="thin"><color rgb="FFBFBFBF"/></bottom><diagonal/></border></borders>'
+    '<border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right>'
+    '<top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
     '<cellXfs count="8">'
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                   # 0
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'                                      # 1 title
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'       # 1 title (black bar, white bold)
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'  # 2 header
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'                                    # 3 data
-    '<xf numFmtId="9" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'              # 4 data %
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                      # 5 total
-    '<xf numFmtId="10" fontId="1" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>'  # 6 total %
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'                                                    # 7 raw text
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 3 data
+    '<xf numFmtId="9" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/>'  # 4 data %
+    '<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'       # 5 total (gray, black bold)
+    '<xf numFmtId="10" fontId="2" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>'  # 6 total %
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'                     # 7 raw data (Cambria, border)
     '</cellXfs></styleSheet>'
 )
 
@@ -331,7 +334,9 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
         return (l[k] / l["load_count"]) if l["load_count"] else None
 
     # ---- Sheet 1: Overview Summary By Lane ----
-    s1 = [f'<row r="1">{_cx(1, 1, s=1, text=program + " Performance Overview (by Lane)")}</row>']
+    t1 = _cx(1, 1, s=1, text=program + " Performance Overview (by Lane)") + "".join(
+        _cx(c, 1, s=1) for c in range(2, 7))            # black title bar across A1:F1
+    s1 = [f'<row r="1">{t1}</row>']
     hdr1 = ["Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Comments"]
     s1.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr1)) + "</row>")
     first = 3
@@ -361,7 +366,9 @@ def build_workbook_xlsx(out_path, report, rows, raw_table, program):
     sheet1 = _sheet_xml(s1, _cols_xml([34, 11, 8, 12, 8, 34]))
 
     # ---- Sheet 2: Overview Summary by Trip ----
-    s2 = [f'<row r="1">{_cx(1, 1, s=1, text=program + " Performance Overview (by TripID)")}</row>']
+    t2 = _cx(1, 1, s=1, text=program + " Performance Overview (by TripID)") + "".join(
+        _cx(c, 1, s=1) for c in range(2, 8))            # black title bar across A1:G1
+    s2 = [f'<row r="1">{t2}</row>']
     hdr2 = ["TripID", "Lane", "Load Count", "OTP", "OT Dispatch", "OTD", "Route/HCR"]
     s2.append('<row r="2">' + "".join(_cx(i + 1, 2, s=2, text=h) for i, h in enumerate(hdr2)) + "</row>")
     for ri, l in enumerate(lanes, start=first):
