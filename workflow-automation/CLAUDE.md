@@ -205,7 +205,12 @@ Re-save as .xlsx to read cells (that's how May was read). OneDrive read path wor
 drive:///users/me → file:///{driveId}/{itemId}; big reads spill to a tool-results txt.
 OPEN: automate where the monthly JBH raw extract comes from (portal/email/EDI). Also BUILT a reusable generic monthly customer-performance report
 (`report_customer_monthly.py` + `.sql`, DGLIQ DGL_TMS.tms) — keep, it's a different artifact.
-GATED: email/attach delivery needs Microsoft 365 re-auth (disconnected). Account-health report
+DELIVERY LIVE (2026-09): the whole chain runs on Justin's host via Task Scheduler (wrapper
+run_usps.cmd -> pwsh -> run_monthly.ps1), scheduled Day 1 06:00, "run only when logged on",
+non-elevated. EMAIL works via classic Outlook COM (must be NON-elevated + a signed-in classic
+Outlook profile; 0x800703F0 = elevation mismatch or new-Outlook, which has no COM). SharePoint
+drop = host Copy-Item into the OneDrive-synced "USPS Monthly Reporting" library. This is all
+HOST-side, NOT the Claude M365 connector (still read-only). Account-health report
 is already in flight internally (Command Center PR #12) — reuse, don't duplicate.
 DGLIQ NOTE: dgl-mcp now exposes dgliq_describe_schema/list_databases (schema only, no
 free-form query tool) + tms_* + pm_* + rec_*. DGL_TMS schemas: tms, ingest, comms, ops,

@@ -19,10 +19,12 @@ only, no money movement; the only outbound action is an email/attachment the sen
   (`report_customer_monthly.py`) + query (`report_customer_monthly.sql`). Reusable for any
   customer that wants a volume/revenue/margin/on-time/accessorials summary. Keep it — it is
   a different artifact from the USPS Self Report.
-- **Delivery GATED:** the send/attach step needs **Microsoft 365** (currently
-  disconnected / intermittently needs re-authorization). Until then reports render to
-  file/console; wiring the Outlook draft is a small add (inject an `outlook_create_draft`
-  callable, same pattern as the POD reader).
+- **Delivery LIVE (host-side):** the monthly run emails the workbook to J.Reynolds via classic
+  Outlook COM and drops a copy into the OneDrive-synced SharePoint "USPS Monthly Reporting"
+  library — all on Justin's host (Task Scheduler), NOT the Claude M365 connector (which stays
+  read-only). Email requires a NON-elevated run + a signed-in *classic* Outlook profile
+  (new Outlook has no COM; an elevated caller gets 0x800703F0). SMTP is an alternative path
+  (`-MailMethod Smtp`) if a relay is available.
 
 ## Pipeline — extract → generator → filled Overview (BUILT, dependency-free)
 
