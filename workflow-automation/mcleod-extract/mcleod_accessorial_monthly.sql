@@ -127,10 +127,12 @@ SELECT
     s.order_id,
     s.stop_type,
     s.order_sequence,
-    s.sched_arrive_early AS appointment_early,
-    s.sched_arrive_late  AS appointment_late,
-    s.actual_arrival,
-    s.actual_departure,
+    -- CONVERT to ISO (style 120: 'YYYY-MM-DD HH:MI:SS') so the CSV is locale-independent;
+    -- Export-Csv would otherwise write the host's local datetime format and break parsing.
+    CONVERT(varchar(19), s.sched_arrive_early, 120) AS appointment_early,
+    CONVERT(varchar(19), s.sched_arrive_late,  120) AS appointment_late,
+    CONVERT(varchar(19), s.actual_arrival,     120) AS actual_arrival,
+    CONVERT(varchar(19), s.actual_departure,   120) AS actual_departure,
     s.appt_required
 FROM        [lme_1720].[dbo].[stop] s
 JOIN        [lme_1720].[dbo].[orders] o ON o.id = s.order_id

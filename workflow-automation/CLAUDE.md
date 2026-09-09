@@ -112,9 +112,17 @@ V1 PIPELINE COMPLETE (offline-tested; PR #16). Files in `mcleod-extract/`:
 - `run_accessorial_monthly.ps1` = host runner (pwsh): Invoke-Sqlcmd -OutputAs DataTables splits the
   5 result sets -> 5 CSVs -> python -> workbook -> guarded email (classic Outlook COM, non-elevated)
   + optional -SharePointDir drop. ASCII-only. Schedule via a .cmd wrapper (Day 2 06:30). READ-ONLY.
-Tests: generator 4 + workbook 1, all green. NEXT: run it once on the host against live McLeod to
-sanity-check real numbers, then decide cadence/recipients; write-back stays OUT of scope (needs a
-policy + write scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
+Tests: generator 5 + workbook 1, all green. FIRST LIVE HOST RUN (2026-09-09): worked end-to-end,
+Aug 2026 = 2,398 delivered loads, rate-con missing 90.5% (2,169), margin table populated
+(detention/layover/tonu/stopoff real $) — BUT bucket A (un-billed detention) came back $0. ROOT
+CAUSE = locale datetime bug: PowerShell Export-Csv on the US host wrote stop datetimes as
+"M/D/YYYY h:mm:ss AM", which parse_dt (ISO-only) couldn't parse -> every stop skipped. FIX (both):
+Query E now CONVERT(...,120)s the 4 stop datetimes to ISO so the CSV is locale-independent, AND
+parse_dt now also accepts the US formats (regression test added). Host must re-run with the updated
+mcleod_accessorial_monthly.sql + analyze_leakage.py. LESSON: any datetime a PS host Export-Csv's must
+be CONVERTed to ISO in SQL (same class as the em-dash/ASCII lesson from #6). NEXT: re-run, confirm
+detention $ is non-zero/sane, then cadence/recipients. Write-back stays OUT of scope (policy + write
+scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It

@@ -139,6 +139,30 @@ def test_render_text_smoke():
         _cleanup(paths)
 
 
+def test_detention_parses_us_date_format():
+    """PowerShell Export-Csv on a US host writes 'M/D/YYYY h:mm:ss AM' datetimes.
+    Detention must still compute (regression for the $0 bug), not silently zero out."""
+    loads = _w(LOADS_HDR, [
+        {"pro_number": "U1", "customer": "BETA", "rate_confirmation_sent_date": "2026-08-01 09:00:00"},
+    ])
+    oc = _w(OC_HDR, [])            # no billed detention -> the gap should surface
+    cp = _w(CP_HDR, [])
+    cc = _w(CC_HDR, [{"charge_id": "DET", "descr": "Detention", "is_fuel_surcharge": "N"}])
+    stops = _w(STOPS_HDR, [
+        {"order_id": "U1", "order_sequence": "1",
+         "appointment_early": "8/1/2026 8:00:00 AM", "appointment_late": "8/1/2026 8:00:00 AM",
+         "actual_arrival": "8/1/2026 8:00:00 AM", "actual_departure": "8/1/2026 11:30:00 AM"},
+    ])
+    paths = (loads, oc, cp, cc, stops)
+    try:
+        rep = R.build_shadow_report(*paths, month="2026-08")
+        d = rep["detention"]
+        assert _approx(d["elig_gap"], 52.5) and d["elig_loads"] == 1     # 1.5h * $35, capped $150
+        assert "U1" in d["by_order"]
+    finally:
+        _cleanup(paths)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
