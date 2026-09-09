@@ -118,10 +118,14 @@ Aug 2026 = 2,398 delivered loads, rate-con missing 90.5% (2,169), margin table p
 CAUSE = locale datetime bug: PowerShell Export-Csv on the US host wrote stop datetimes as
 "M/D/YYYY h:mm:ss AM", which parse_dt (ISO-only) couldn't parse -> every stop skipped. FIX (both):
 Query E now CONVERT(...,120)s the 4 stop datetimes to ISO so the CSV is locale-independent, AND
-parse_dt now also accepts the US formats (regression test added). Host must re-run with the updated
-mcleod_accessorial_monthly.sql + analyze_leakage.py. LESSON: any datetime a PS host Export-Csv's must
-be CONVERTed to ISO in SQL (same class as the em-dash/ASCII lesson from #6). NEXT: re-run, confirm
-detention $ is non-zero/sane, then cadence/recipients. Write-back stays OUT of scope (policy + write
+parse_dt now also accepts the US formats (regression test added). Host re-ran with the fixed files. LESSON: any datetime a PS host Export-Csv's must
+be CONVERTed to ISO in SQL (same class as the em-dash/ASCII lesson from #6).
+V1 VALIDATED END-TO-END ON LIVE DATA (2026-09-09 re-run): Aug 2026 eligible un-billed detention
+= $42,692 (767 loads); pre-eligibility $63,788 (995 loads); 454 carrier-late stops removed ($22,969).
+Top customers surfaced (Apex/Maersk/Life Fitness/CNW/K+N...). CROSS-CHECK: $42,692 x 12 = ~$512k/yr,
+reconciles with the independent 365-day leakage figure ($531k) -> the monthly pipeline reproduces
+the whole-book analysis. Margin table + rate-con gap (90.5%) also populated. NEXT: cadence/recipients,
+then mark PR #16 ready/merge. Write-back stays OUT of scope (policy + write
 scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
