@@ -233,10 +233,14 @@ def render_text(rep) -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 7:
+    if len(sys.argv) not in (7, 8):
         print(__doc__)
         print("\nUsage: accessorial_shadow_report.py loads.csv othercharges.csv carrierpay.csv "
-              "chargecodes.csv stops.csv YYYY-MM")
+              "chargecodes.csv stops.csv YYYY-MM [out.xlsx]")
         sys.exit(1)
     rep = build_shadow_report(*sys.argv[1:6], month=sys.argv[6])
     print(render_text(rep))
+    if len(sys.argv) == 8:
+        import accessorial_workbook
+        accessorial_workbook.build_workbook(rep, sys.argv[7])
+        print(f"\nworkbook written: {sys.argv[7]}")
