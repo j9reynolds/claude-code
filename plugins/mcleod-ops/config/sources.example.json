@@ -1,0 +1,195 @@
+{
+  "_comment": "Copy to .claude/mcleod-ops/sources.json and fill in for your environment. Values written as ${VAR} are read from the environment at run time \u2014 keep real addresses and every secret in environment variables, never in this file.",
+  "defaults": {
+    "poll_window_minutes": 15,
+    "max_events_per_cycle": 25,
+    "autonomy": "draft"
+  },
+  "sources": [
+    {
+      "id": "ops-mailbox",
+      "kind": "email",
+      "enabled": true,
+      "adapter": "microsoft365",
+      "_adapter_options": "imap | microsoft365 | gmail \u2014 microsoft365/gmail ride an already-connected MCP connector and need no secret here; imap signs in as the mailbox itself with an app password. Default is microsoft365 because the imap path is unavailable in two common cases: Exchange Online has broadly disabled basic auth for IMAP, and Claude Code cloud sessions cannot reach port 993. See the plugin README before choosing imap.",
+      "mailbox": "${OPS_MAILBOX}",
+      "folders": [
+        "INBOX"
+      ],
+      "imap": {
+        "_comment": "Used when adapter is 'imap'. Credentials come from the environment; nothing secret belongs in this file.",
+        "host": "outlook.office365.com",
+        "port": 993,
+        "tls": true,
+        "username_env": "OPS_MAILBOX",
+        "password_env": "OPS_MAIL_APP_PASSWORD"
+      },
+      "microsoft365": {
+        "_comment": "Used when adapter is 'microsoft365'. Reads the mailbox through an already-connected Microsoft 365 MCP connector, so the connector owns the credential and nothing secret belongs here \u2014 and no app password, which Exchange Online no longer accepts for IMAP. Tool and parameter names differ per deployment: read them off your own connector's tool schemas rather than assuming these. The shape below is transcribed from a real one.",
+        "server": "${OPS_MAIL_MCP_SERVER}",
+        "read_tools": {
+          "outlook_email_search": "message metadata for a window \u2014 subject, sender, recipients, receivedDateTime, internetMessageId, and a resource uri. The cycle's entry point.",
+          "read_resource": "one message in full, by the uri the search returned: body, attachments, conversationId. Search returns a truncated preview, not the body.",
+          "get_me": "the signed-in account, to confirm whose delegate rights the read is riding on."
+        },
+        "never_call": [
+          "outlook_send_mail",
+          "outlook_send_draft",
+          "outlook_forward_mail",
+          "outlook_create_draft",
+          "outlook_create_reply_draft",
+          "outlook_create_reply_all_draft",
+          "outlook_update_draft",
+          "outlook_delete_draft",
+          "outlook_trash_thread",
+          "outlook_batch_delete_messages",
+          "outlook_modify_labels",
+          "outlook_batch_modify_labels",
+          "outlook_set_vacation"
+        ],
+        "_never_call_comment": "A mail connector exposes send, delete, and mailbox-rule tools directly beside its reads \u2014 often one word apart from the tool the watcher wants. This names the dangerous neighbours, but it is not exhaustive and it is not the boundary: the boundary is the allowlist above. Call only what read_tools names. Preparing a reply is a handler's job at its own autonomy, never the watcher's.",
+        "queries": [
+          {
+            "id": "mailbox-recent",
+            "tool": "outlook_email_search",
+            "params": {
+              "mailboxOwnerEmail": "${OPS_MAILBOX}",
+              "afterDateTime": "${CURSOR}",
+              "limit": 25,
+              "offset": 0
+            },
+            "cursor_field": "receivedDateTime",
+            "id_field": "internetMessageId",
+            "id_prefix": "email:",
+            "body_tool": "read_resource",
+            "body_uri_field": "uri",
+            "page_param": "offset",
+            "page_field": "nextOffset",
+            "more_field": "moreResults",
+            "total_field": "totalResultCount"
+          }
+        ],
+        "_id_comment": "id_field is internetMessageId \u2014 the RFC822 Message-ID \u2014 with its angle brackets stripped, which yields the same 'email:<message-id>' the imap adapter produces, so the ledger stays consistent if you ever switch adapters. Do NOT key the ledger on the connector's own 'id' field: that one is mailbox- and folder-scoped, so a message moved from Inbox to Archive (by hand or by a rule) comes back with a different id, the ledger sees a new event, and a second agent gets dispatched at the same carrier. Preventing exactly that is what the ledger is for.",
+        "_body_comment": "outlook_email_search returns metadata plus a short truncated preview \u2014 NOT the body. Routing matches on body content (a pickup city, a delivery city, a rate), which a preview cannot carry. For every message that survives 'ignore', call body_tool on body_uri_field and route from that. Attachments arrive on the same read, subject to attachment_handling. Do NOT trust the search row's hasAttachments flag: it counts only non-inline files, so a message can report false and still come back from body_tool carrying attachments (verified live 2026-09-08 \u2014 a quote whose search row said false returned six). Decide attachment handling from the full read, never from the search row.",
+        "_pagination_comment": "This tool returns at most 25 results per request whatever 'limit' asks for, and reports its own truncation: a final item carrying more_field / page_field / total_field. If max_events_per_cycle is above 25, one call does not cover the cycle \u2014 page by passing page_field back as page_param until the final item stops carrying it. If you stop early, that is a coverage gap to report with the cursor left short, not a complete read. A cursor advanced over a page that was never read loses those messages permanently.",
+        "_filter_comment": "Combinations this tool rejects or silently narrows \u2014 the symptom is a wrong or empty result, not an error. With mailboxOwnerEmail set (the shared-mailbox path), use a free-text 'query' OR the sender/date filters, never both, and 'recipient' is not supported at all. 'order' is incompatible with a free-text 'query', and setting 'order' without 'folderName' scopes the search to Inbox by default. For a watch cycle prefer the date window alone: it is the combination that pages predictably. Folder names here are Outlook display names and are case-insensitive ('Inbox', 'Sent Items'), so the IMAP spelling INBOX also resolves.",
+        "_access_comment": "mailboxOwnerEmail reads a shared mailbox, or another account you hold delegate rights over; omit it to read the signed-in account's own mailbox. Reading another mailbox needs Full Access granted in the M365 admin center (Mail.Read.Shared). When it is missing the connector returns a permission error rather than an empty inbox \u2014 report that verbatim; never read it as a quiet zero.",
+        "_coverage_comment": "KNOWN GAP: the window filters on receivedDateTime, so the cycle sees messages as they arrive. It does not see a message edited, moved, or deleted after arrival, and it does not see Sent Items unless folderName names that folder \u2014 so a reply a human already sent by hand is invisible, and the watcher can route a thread that is already answered. Carry that into the report rather than letting a clean cycle imply the mailbox is fully covered."
+      },
+      "ignore": {
+        "from_domains": [
+          "bounces.example.com"
+        ],
+        "subject_patterns": [
+          "^Out of Office",
+          "^Automatic reply",
+          "^Undeliverable"
+        ],
+        "from_addresses": [
+          "PowerAutomateNoReply@microsoft.com"
+        ]
+      },
+      "attachment_handling": {
+        "read_types": [
+          "pdf",
+          "png",
+          "jpg",
+          "tif",
+          "csv",
+          "xlsx"
+        ],
+        "max_size_mb": 20
+      }
+    },
+    {
+      "id": "mcleod-tms",
+      "kind": "tms",
+      "enabled": true,
+      "adapter": "rest",
+      "_adapter_options": "rest | connector | sql | file_drop \u2014 rest calls the McLeod web services API directly, connector reads McLeod through an MCP connector this session already has, sql reads a reporting replica, file_drop watches an EDI/export directory",
+      "rest": {
+        "base_url": "https://MCLEOD_HOST/ws/api",
+        "_auth_comment": "Confirm the scheme AND the endpoint paths against your own McLeod API documentation, or by calling the endpoint once and reading its WWW-Authenticate header (Import-OpsCredential.ps1 -TestHttp does this). These are placeholders, not verified defaults, and they differ across McLeod products and releases.",
+        "auth": {
+          "scheme": "basic",
+          "_scheme_options": "basic | header \u2014 'basic' sends username/password as HTTP Basic; 'header' sends the literal headers below",
+          "username_env": "MCLEOD_API_USER",
+          "password_env": "MCLEOD_API_PASSWORD",
+          "headers": {
+            "_comment": "Used only when scheme is 'header'.",
+            "Authorization": "Token ${MCLEOD_API_TOKEN}",
+            "X-com.mcleodsoftware.CompanyID": "${MCLEOD_COMPANY_ID}"
+          }
+        },
+        "queries": [],
+        "_queries_comment": "Intentionally empty. Fill in from your McLeod API documentation \u2014 each entry needs id, path, params (use ${CURSOR} for the high-water mark), cursor_field and id_field. The watcher reports a failed query rather than probing for a working path."
+      },
+      "connector": {
+        "_comment": "Used when adapter is 'connector'. Reads McLeod through an MCP connector rather than a direct API or database \u2014 the connector owns the credential, so nothing secret is needed here. Tool and parameter names differ per deployment: read them off your own connector's tool schemas rather than assuming these. The shape below is transcribed from a real one.",
+        "server": "${MCLEOD_MCP_SERVER}",
+        "read_tools": {
+          "search_orders": "orders by customer / ordered-date range / status \u2014 the cycle's entry point",
+          "get_order": "one order by id: header, customer, and every stop",
+          "get_movement": "every movement on one order id: carrier, dispatch and rate-confirmation state, pay",
+          "get_customer": "customer by id or name: contact, credit status, balance",
+          "get_carrier": "carrier by id, name, or DOT",
+          "list_comments": "comments on one parent row (order, customer, or carrier)",
+          "resolve_identifier": "map a customer-supplied PRO / reference / lane code to an order id"
+        },
+        "never_call": [
+          "create_comment"
+        ],
+        "_never_call_comment": "Write tools the connector exposes. The watcher is read-only and must never call these. A handler may only at 'act' autonomy, and never past its own prohibitions.",
+        "queries": [
+          {
+            "id": "orders-recent",
+            "tool": "search_orders",
+            "params": {
+              "fromDate": "${CURSOR_DATE}"
+            },
+            "cursor_field": "ordered_date",
+            "id_field": "id",
+            "result_path": "orders",
+            "count_field": "count",
+            "cap_field": "capped_at"
+          }
+        ],
+        "_cursor_comment": "${CURSOR_DATE} is the date part of the stored cursor. The filter here is date-granular (YYYY-MM-DD) while the cursor and the returned cursor_field are full timestamps, so a sub-day cycle necessarily re-reads the current day. That is correct and cheap: the ledger claim dedupes the repeats. Never round the cursor forward to make the re-read go away.",
+        "_cap_comment": "This connector reports its own bound: compare count_field against cap_field on every response. Equal means the result was truncated and there is more you did not see \u2014 a coverage gap to report, not a complete read. Results come back newest-first and cannot be paged backwards, so advancing the cursor over a truncated page drops the oldest events.",
+        "_coverage_comment": "KNOWN GAP: this query filters on ordered_date, which is when the order was created. There is no changed-since filter, so the cycle sees NEW orders but not status changes, reschedules, or cancellations on existing ones. Say so in the report rather than implying the TMS is fully covered. Closing it needs either a changed-since filter on the connector or the sql adapter against a replica."
+      },
+      "sql": {
+        "_comment": "Used only when adapter is 'sql'. Read-only credentials against a reporting replica.",
+        "dsn_env": "MCLEOD_READONLY_DSN",
+        "queries": [
+          {
+            "id": "orders-changed",
+            "sql": "SELECT id, status, changed_date FROM orders WHERE changed_date > ? ORDER BY changed_date",
+            "cursor_field": "changed_date",
+            "id_field": "id"
+          }
+        ]
+      },
+      "file_drop": {
+        "_comment": "Used only when adapter is 'file_drop'. Directory McLeod exports EDI/CSV into.",
+        "watch_dir": "/PATH/TO/MCLEOD/EXPORT",
+        "patterns": [
+          "*.edi",
+          "*.csv"
+        ]
+      }
+    }
+  ],
+  "escalation": {
+    "_comment": "Where the watcher reports things it will not handle on its own.",
+    "channel": "report-to-user",
+    "_channel_options": "report-to-user | slack | email",
+    "slack_channel": "#freight-ops-alerts",
+    "always_escalate": [
+      "money-amount-change",
+      "claim-or-cargo-damage",
+      "customer-escalation-language",
+      "unrecognized-workflow"
+    ]
+  }
+}
