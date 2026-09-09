@@ -98,7 +98,7 @@ if (-not (Test-Path $outXlsx)) { throw "expected workbook not found: $outXlsx (s
 if ($MailMethod -ne "None") {
   $subject = "USPS Self Report - $monLabel"
   $body    = "Automated USPS Self Report for $monLabel is attached (0029H). " +
-             "Please review before forwarding to J.B. Hunt. Generated $((Get-Date).ToString('g'))."
+             "Please review before forwarding to USPS. Generated $((Get-Date).ToString('g'))."
   try {
     if ($MailMethod -eq "Outlook") {
       $ol   = New-Object -ComObject Outlook.Application
