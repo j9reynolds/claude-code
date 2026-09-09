@@ -100,8 +100,21 @@ workbook -> email + SharePoint drop, guarded, Task Scheduler. Phase 0 DONE: othe
 enumerated (above); all 27 extract columns verified live (INFORMATION_SCHEMA 2026-09-09); MONTHLY
 extract written = `mcleod-extract/mcleod_accessorial_monthly.sql` (prior-cal-month window via
 DECLARE @mfrom/@mto, same 5 queries/columns as the 365-day one so the analyzer is unchanged;
-Query E uses the PM-corrected direct stop.order_id join). NEXT: host runner (Invoke-Sqlcmd -> CSVs
--> analyzer -> workbook -> deliver) + a styled review workbook reusing the #6 xlsx writer.
+Query E uses the PM-corrected direct stop.order_id join).
+V1 PIPELINE COMPLETE (offline-tested; PR #16). Files in `mcleod-extract/`:
+- `accessorial_shadow_report.py` = generator: reads the 5 CSVs -> structured result (4 buckets:
+  A un-billed detention appt-based/per-stop-$150-cap/eligibility-adj + billed loads excluded,
+  B accessorial margin by category, C negative-margin categories, D rate-con gap). Reuses
+  analyze_leakage CODE_CATEGORY/carrier_category/constants so it never diverges from the 365-day
+  analysis. render_text + optional 8th CLI arg writes the workbook. ASCII-only (em-dashes scrubbed).
+- `accessorial_workbook.py` = stdlib OOXML writer (5 tabs: Summary, Detention by Customer,
+  Detention by Load, Accessorial Margin, Rate-Con Gap), same install-free zip/xml approach as #6.
+- `run_accessorial_monthly.ps1` = host runner (pwsh): Invoke-Sqlcmd -OutputAs DataTables splits the
+  5 result sets -> 5 CSVs -> python -> workbook -> guarded email (classic Outlook COM, non-elevated)
+  + optional -SharePointDir drop. ASCII-only. Schedule via a .cmd wrapper (Day 2 06:30). READ-ONLY.
+Tests: generator 4 + workbook 1, all green. NEXT: run it once on the host against live McLeod to
+sanity-check real numbers, then decide cadence/recipients; write-back stays OUT of scope (needs a
+policy + write scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It

@@ -4,22 +4,22 @@ Read-only "money left on the table" report over one month of delivered McLeod lo
 Consumes the five CSVs produced by `mcleod_accessorial_monthly.sql`
 (loads / othercharges / carrierpay / chargecodes / stops) and returns a STRUCTURED
 result (per-category, per-customer, per-load) that a workbook can render and a human
-reviews. It reports only — it never bills, pays, or writes anything.
+reviews. It reports only - it never bills, pays, or writes anything.
 
 Four buckets:
-  A. Un-billed customer DETENTION — appointment-based, per-stop $150 cap, eligibility
+  A. Un-billed customer DETENTION - appointment-based, per-stop $150 cap, eligibility
      adjusted (carrier-late stops removed), minus loads already carrying a detention
      charge. This is the headline leakage number.
-  B. Accessorial MARGIN by category — customer-billed vs carrier-paid vs deducted
+  B. Accessorial MARGIN by category - customer-billed vs carrier-paid vs deducted
      (hard data from the charges themselves).
-  C. NEGATIVE-margin categories — where Delta paid the carrier an accessorial it did
+  C. NEGATIVE-margin categories - where Delta paid the carrier an accessorial it did
      not bill the customer (a subset view of B, surfaced for action).
-  D. Rate-con CONTROL GAP — delivered loads with no rate_confirmation_sent_date.
+  D. Rate-con CONTROL GAP - delivered loads with no rate_confirmation_sent_date.
 
 The classification maps, constants, and helpers are imported from `analyze_leakage`
 (the 365-day analysis) so the monthly report and that analysis never diverge. McLeod
 actual times are approximate; the per-load defensible figure still needs the POD
-(`reference-implementation/pod_reader.py`) — the detention numbers here are the
+(`reference-implementation/pod_reader.py`) - the detention numbers here are the
 population estimate for review, explicitly flagged.
 
 Usage:
@@ -227,7 +227,7 @@ def render_text(rep) -> str:
     L.append(f" D. RATE-CON CONTROL GAP: {rep['ratecon_gap']['missing']:,} loads "
              f"({rep['ratecon_gap']['pct']:.1f}%) with no signed rate-con recorded.")
     L.append("=" * 74)
-    L.append(" Detention uses McLeod approximate times — the per-load billable figure needs")
+    L.append(" Detention uses McLeod approximate times - the per-load billable figure needs")
     L.append(" the POD (pod_reader.py). This report is READ-ONLY; a human reviews before any bill.")
     return "\n".join(L)
 
