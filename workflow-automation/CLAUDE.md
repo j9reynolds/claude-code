@@ -258,6 +258,18 @@ Outlook profile; 0x800703F0 = elevation mismatch or new-Outlook, which has no CO
 drop = host Copy-Item into the OneDrive-synced "USPS Monthly Reporting" library. This is all
 HOST-side, NOT the Claude M365 connector (still read-only). Account-health report
 is already in flight internally (Command Center PR #12) — reuse, don't duplicate.
+SHIPPED + VERIFIED (2026-09-09): full chain proven on Justin's host end-to-end — extract 130
+rows -> workbook -> SharePoint drop -> EMAIL delivered ("emailed via Outlook to
+J.Reynolds@DeltaGroupLog.com"). Scheduled task "USPS Self Report" created (Day 1 06:00, Last
+Run 0x0). Host layout: the 4 files (usps_selfreport_pipeline.py, report_usps_self_report.py,
+usps_selfreport_extract.sql, run_monthly.ps1) + run_usps.cmd wrapper live in C:\Automation\USPS\.
+MUST run under pwsh (PowerShell 7) — the SqlServer module (Invoke-Sqlcmd) is installed there,
+NOT in Windows PowerShell 5.1 (which uses a different module path); launching with `powershell`
+fails "module not found". -SharePointDir defaults to Justin's synced USPS library path. Email
+body wording per Justin: "Please review before forwarding to USPS" (NOT J.B. Hunt). All ASCII
+(em-dashes caused mojibake/parse errors under the Windows console/PS 5.1 — keep the .ps1 + SQL
++ render_text ASCII-only). PR #3 MERGED to main 2026-09-09 (merge commit ffc3f6c); the old
+branch is finished — any follow-up starts fresh from main.
 DGLIQ NOTE: dgl-mcp now exposes dgliq_describe_schema/list_databases (schema only, no
 free-form query tool) + tms_* + pm_* + rec_*. DGL_TMS schemas: tms, ingest, comms, ops,
 intel, retrieval, rec, chat. Reports run as scheduled SQL on-network (no query tool + caps).
@@ -425,8 +437,10 @@ Two read-only paths, both emit the identical CSV `leakage_model.py --csv` consum
 
 ## Where things live
 
-- **PR #3** (draft): branch `claude/workflow-automation-identification-3shwij` on
-  `j9reynolds/claude-code`. CI = Semgrep, green. Subscribed for events.
+- **PR #3** (MERGED 2026-09-09, merge commit `ffc3f6c`): branch
+  `claude/workflow-automation-identification-3shwij` on `j9reynolds/claude-code`. The whole
+  workflow-automation program incl. the shipped #6 USPS Self Report. CI = Semgrep, green. The
+  branch is finished — restart from main for any follow-up (do not restack on merged history).
 - **PR #7** (MERGED 2026-09-08, merge commit `6f00a76`): branch `claude/m365-bug-fix-pwtvt3`.
   Made the `mcleod-ops` Microsoft 365 mailbox adapter real — see the mailbox-access section
   above. Docs/config only, no executable code; `fetch_mail.py` untouched. CI = Semgrep, green.
