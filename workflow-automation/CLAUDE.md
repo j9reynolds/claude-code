@@ -88,6 +88,20 @@ FROM [lme_1720].[dbo].[other_charge] GROUP BY charge_id, LTRIM(RTRIM(descr)) ORD
 Maps onto `customer-accessorial-rate-sheet.md`: Detention (DET/DU/DL/DEP/DR), Layover (LAYO/LAYR/LYC),
 TONU, Lumper (LMP), Stopoff (STP/SOC/XST). NOTE: totals above are whole-book all-customers all-time,
 not the 365-day leakage window — re-scope by ordered_date + customer for the shadow report.
+The live enumeration CONFIRMS `reference-implementation/leakage_model.py`/`analyze_leakage.py`
+`CODE_CATEGORY` map (DET/DL/DU/DEP/DR/LAYO/LAYR/LYC/TONU/LMP/SOC/STP/XST/DRA) — reuse it, don't rebuild.
+
+#1 ACCESSORIAL SHADOW REPORT (IN PROGRESS, chosen next after #6; PR #16 WIP). Scope = ALL
+customers, MONTHLY (Justin). Read-only "money left on the table" report, 4 buckets (un-billed
+customer accessorials / un-enforced carrier deductions / ineligible carrier pay / rate-con gap),
+human-reviewed, NO writes — same host pattern as #6. Architecture: monthly SQL -> 5 CSVs ->
+Python analyzer (reuse analyze_leakage.py + accessorial_rules.py engine, 20/20 tests) -> styled
+workbook -> email + SharePoint drop, guarded, Task Scheduler. Phase 0 DONE: other_charge codes
+enumerated (above); all 27 extract columns verified live (INFORMATION_SCHEMA 2026-09-09); MONTHLY
+extract written = `mcleod-extract/mcleod_accessorial_monthly.sql` (prior-cal-month window via
+DECLARE @mfrom/@mto, same 5 queries/columns as the 365-day one so the analyzer is unchanged;
+Query E uses the PM-corrected direct stop.order_id join). NEXT: host runner (Invoke-Sqlcmd -> CSVs
+-> analyzer -> workbook -> deliver) + a styled review workbook reusing the #6 xlsx writer.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It
