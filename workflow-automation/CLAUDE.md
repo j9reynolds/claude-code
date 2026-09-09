@@ -62,16 +62,32 @@ and **verified against live db02**:
   `"McLeodSql is read-only: only SELECT statements are permitted."` and never reached db02.
   Every `mcleod_query` call, refused ones included, is audit-logged to the `read_audit` table.
 
-**`other_charge` codes — partially answered (2026-09-08).** A live `mcleod_query` returned
-`FSC` = Fuel Surcharge and `STP` = Stop. So fuel and accessorials ARE separable per-code; the
-lump was a connector limitation, not a schema one. The full code set is still to be enumerated
-— run this and record the result here:
+**`other_charge` codes — ENUMERATED (2026-09-09, live whole-book GROUP BY).** Charges ARE
+separable per-code (the lump was a connector limit, not schema). KEY FINDING: accessorial types
+are FRAGMENTED across many `charge_id`s, and `charge_id` alone is NOT enough — the same id
+carries many meanings via `descr` (esp. `APR` = "approved rate", a catch-all for linehaul, daily
+hours, straps, late-appt, etc.). So the engine must classify on (charge_id + descr), not id alone.
+Accessorial-relevant code map (build the classifier from this, not the earlier STP=Stop guess):
+- DETENTION: `DET` (Detention), `DU` (Detention Unloading), `DL` (Detention Loading), `DEP`
+  (Detention), `DR` (Destination Trailer Det.); "MAX DETENTION"/"Max Detention" variants recur
+  under DU/DEP/LAYR. (Detention is the single most fragmented type — sum ALL of these.)
+- LAYOVER: `LAYO` (Layover), `LAYR` (Layover At Receiver, + Max-Det/Re-del variants), `LYC` (Layover).
+- TONU: `TONU` (Truck Order Not Used, + "-Dry Run").
+- LUMPER: `LMP` (Lumper).  DRIVER-ASSIST: `DRA` (Driver Assist).
+- STOP / EXTRA STOP: `STP` (Stop; also mislabeled "10+ STRAPS"/null in a few rows — check descr),
+  `SOC` (Extra Stop), `XST` (Extra Stop).  REDELIVERY: `RDEL`.
+- FUEL (EXCLUDE from accessorials): `FSC`, `FUEL` (biggest totals overall — $9.8M/$4.5M).
+- BASE FREIGHT / rate (NOT accessorials): `APR` (mostly), `FKG` (Flat Rate-KG, airport-suffixed),
+  `SHML`/`SM` (Short Miles), `MIN`, `TEAM`/`TMC`, `MTM` (Empty Miles), `ADM`/`ADC`/`EM`/`ORM` (misc miles).
+Long tail >200 distinct (charge_id,descr) rows (query truncated at 200 by SUM desc); the
+accessorial set above is the actionable part. Full re-run: the GROUP BY below, page OFFSET/FETCH.
 ```sql
 SELECT charge_id, LTRIM(RTRIM(descr)) AS descr, COUNT(*) AS n, SUM(amount) AS total
-FROM other_charge GROUP BY charge_id, LTRIM(RTRIM(descr)) ORDER BY SUM(amount) DESC
+FROM [lme_1720].[dbo].[other_charge] GROUP BY charge_id, LTRIM(RTRIM(descr)) ORDER BY SUM(amount) DESC
 ```
-Expect Detention / TONU / Layover / Lumper to appear as their own codes and map onto
-`customer-accessorial-rate-sheet.md` (`STP` ↔ its Stopoff row).
+Maps onto `customer-accessorial-rate-sheet.md`: Detention (DET/DU/DL/DEP/DR), Layover (LAYO/LAYR/LYC),
+TONU, Lumper (LMP), Stopoff (STP/SOC/XST). NOTE: totals above are whole-book all-customers all-time,
+not the 365-day leakage window — re-scope by ordered_date + customer for the shadow report.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It
