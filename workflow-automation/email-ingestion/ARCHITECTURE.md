@@ -1,370 +1,213 @@
-# EmailAgent mailbox ingestion pipeline — architecture recommendation
+# JR_Test mailbox ingestion — architecture review
 
-**Status:** proposed, not built. Supersedes the standalone duplicate-removal script
-(`../mailbox-hygiene/`) for the `JR_Test@DeltaGroupLog.com` workflow.
-**Date:** 2026-09-10
-
----
-
-## 1. Requirement 1 — confirming what the current script does
-
-Asked directly: **yes, the existing logic already keeps exactly one copy and removes every
-other copy in the group.** That is not the gap.
-
-`New-RemovalPlan` emits exactly one `Keep` row per duplicate group and a `Remove` row for
-every other member, and the test suite asserts the invariant that no message is ever both
-(`test_Remove-DuplicateMessages.ps1`, "no message is both kept and removed").
-
-Three things about it *are* wrong for this workflow:
-
-| | Current | Required |
-|---|---|---|
-| Survivor | `-Keep Oldest` **by default** (`Newest` exists and is tested, but is not the default) | most recent, always |
-| Disposal | `Delete` → Deleted Items; `Purge` → Recoverable Items | permanently deleted |
-| Shape | a standalone, human-run cleanup pass | one stage of an automated ingestion pipeline |
-
-The third is the real problem, and it is not fixable by editing the deletion logic.
+**Status:** revised 2026-09-10 after reading `j9reynolds/dgl-command-center` and
+`j9reynolds/email-agent`. The first draft of this document recommended building a new
+.NET ingestion service. **That recommendation is withdrawn** — it was written before I
+had access to the existing pipeline, and it would have duplicated working production
+code. What follows replaces it.
 
 ---
 
-## 2. Core finding — this should not be a deduplication script
+## 1. The correction
 
-**Duplicate cleanup must not be a separate pass over the mailbox. It must be a selection step
-inside the ingestion transaction.**
+The pipeline this request describes **already exists and mostly works.** `DGL_Command_Center`
+carries a complete Graph-based intake chain, and `Remove-IngestedJrTestMail.ps1` already
+performs batched `permanentDelete` against `JR_Test@DeltaGroupLog.com`.
 
-The moment there are two independent processes touching `JR_Test` — a cleanup job deleting
-copies and EmailAgent ingesting what is left — Requirement 5's race conditions are not edge
-cases, they are the normal operating mode:
+More importantly, the existing deletion tool made a **better safety decision than the one I
+proposed**. Its candidate list comes from the database — `intake.Request` rows — never from a
+mailbox listing:
 
-- Cleanup deletes an older copy that EmailAgent has already read but not yet committed.
-- EmailAgent ingests a copy that cleanup is concurrently deleting; the delete wins; the row
-  points at a message that no longer exists.
-- A second copy arrives *between* the cleanup pass and the ingestion pass and is ingested as
-  a distinct email.
-- Cleanup runs while EmailAgent is mid-batch and both pick a different "most recent" copy
-  because a third copy landed in between.
+> *a message not yet ingested is untouchable by construction*
 
-No amount of locking between two jobs fixes this cleanly, because the shared state is a
-mailbox — a system with no transactions, no compare-and-swap, and eventual consistency on
-its own indexes.
+That is a stronger guarantee than my proposed read-then-verify-then-delete loop, because it
+removes the failure mode rather than checking for it. A mailbox-listing-driven tool (which is
+what `../mailbox-hygiene/Remove-DuplicateMessages.ps1` is) can always be wrong about whether
+something was ingested. A DB-driven one cannot.
 
-**The fix is structural: one process owns the mailbox.** Deduplication becomes "which copy of
-this group do I ingest" — a decision made in memory, at the moment of ingestion — and the
-older copies are simply deleted alongside the canonical one after ingestion commits. They are
-never ingested and never separately hunted.
-
-That collapses four failure modes into zero and removes an entire moving part.
+**Recommendation: keep the existing architecture. Fix the one thing that is actually broken.**
 
 ---
 
-## 3. Hard constraints — what Exchange Online will and will not do
+## 2. Root cause of the duplicates
 
-### "Permanently deleted" has a specific and limited meaning
+**`internetMessageId` is never captured anywhere in the intake pipeline.**
 
-Requirement 2 asks that duplicates not remain in Deleted Items, Recoverable Items, or Purges.
-**The API cannot deliver the third one. Only mailbox configuration can, and even then not
-instantly.**
+Every dedupe key in both databases is the Microsoft Graph per-message `id`:
 
-Microsoft Graph's `permanentDelete` action (GA since April 2025) is the strongest deletion
-primitive available, and its own documentation states it *"permanently deletes a message and
-places it in the Purges folder."* There is no Graph call that erases an item outright.
-
-What actually governs whether it stays there:
-
-| Setting | Effect | Required value |
-|---|---|---|
-| `SingleItemRecoveryEnabled` | when `$true`, purged items are retained in `Recoverable Items\Purges` | `$false` |
-| `RetainDeletedItemsFor` | dwell time in `Recoverable Items\Deletions` before the Managed Folder Assistant removes them | `0` (max 30 days) |
-| `LitigationHoldEnabled` | any hold pins everything, overriding both of the above | `$false` |
-| Purview retention policy covering the mailbox | same — a hold by another name | mailbox excluded |
-| In-Place Hold / eDiscovery hold | same | none |
-
-With SIR off, no holds, and `RetainDeletedItemsFor 0`, items are removed by the Managed Folder
-Assistant, which runs roughly daily. **So the honest guarantee is: gone from the user-visible
-mailbox immediately, beyond user recovery immediately, fully erased within ~24 hours.** An
-architecture that claims instant erasure would be lying.
-
-This is a configuration task, not a code task, and it must be done and *verified* before the
-pipeline is pointed at a real mailbox.
-
-### Records-retention flag (needs a human decision, not a technical one)
-
-If a permanently deleted email is a rate confirmation, POD, or customer instruction, it is a
-**business record**. Deleting it from Exchange means the Command Center database and its blob
-store become the archive of record, and they inherit every retention and legal-hold obligation
-the mailbox used to carry. That is a defensible design — it is how a queue mailbox is supposed
-to work — but it must be a decision someone makes on purpose, in writing, before go-live.
-It also means attachments must be captured during ingestion (see §6, step c); losing an
-attachment is losing the contract.
-
----
-
-## 4. Technology evaluation
-
-| Technology | Verdict | Reasoning |
-|---|---|---|
-| **Exchange Online PowerShell** | **Not for runtime. Required for setup.** | `Search-Mailbox` is retired. The only bulk deletion path left is `New-ComplianceSearch` + `New-ComplianceSearchAction -Purge`, which is all-or-nothing over a query and **caps at 10 items per mailbox per search** — unusable for per-message work. It remains the *only* way to configure SIR, retention, holds, and application access policy, so it is essential, just not in the hot path. |
-| **Microsoft Graph REST API (direct HTTP)** | **Recommended engine.** | Per-message control, `permanentDelete`, `$batch` (20 ops/request), `$select` to keep payloads small, app-only auth, and mailbox-scoped access policy. Highest throughput, lowest overhead per message, no deprecation horizon. |
-| **Microsoft Graph PowerShell SDK** | **Ops tooling only.** | A wrapper over the same REST surface, so it inherits the capability but adds cmdlet marshalling overhead, version churn, and a runtime with poor async and concurrency. Right for the read-only audit report and one-off admin tasks. Wrong for a continuously running queue processor. |
-| **EWS** | **Excluded — effectively dead.** | Microsoft begins **blocking EWS from non-Microsoft apps on 1 October 2026** unless the tenant configures an AppID allow-list with `EWSEnabled=$true`, with permanent removal on **1 April 2027**. That is three weeks and seven months away respectively. EWS genuinely had the better primitives here — `DeleteItem` with `HardDelete`, 100-item batches, streaming notifications — and none of that is worth building on a platform with a hard stop. |
-| **Hybrid** | **This is the recommendation.** | EXO PowerShell for one-time configuration and compliance verification; Graph REST for the runtime pipeline; Graph PowerShell SDK for audit reporting. Each tool used where it is actually the best one. |
-
-### Runtime host: .NET 8 worker service, on the Command Center host
-
-Not PowerShell. The decisive argument is operational, not linguistic: **Delta already runs
-exactly this shape of thing.** `DGL-McLeodMcp` is a .NET Windows service on that box, with
-`appsettings.json`, a CI pipeline, and an `update-mcp.ps1` deploy script — and the team has
-already paid the tuition on its failure modes (the service-account outage documented in
-`../CLAUDE.md`). A second service following the same pattern inherits that knowledge, that
-deployment path, and that monitoring.
-
-A PowerShell scheduled task would also need to solve leasing, retry with backoff, structured
-logging, connection pooling, and graceful shutdown — all of which the .NET worker/hosted-service
-model gives for free.
-
-### Polling, not webhooks — for v1
-
-Graph change notifications would cut latency to seconds, but cost a public HTTPS endpoint,
-subscription renewal every ~3 days, validation-token handling, and a reconciliation poller
-anyway (notifications are best-effort and can be missed). A queue mailbox tolerates a minute.
-
-**Recommendation: poll every 30–60s, and revisit webhooks only if measured latency becomes a
-business problem.** Note also that delta query is the *wrong* tool here: delta shines for a
-folder you read repeatedly and never empty. This folder empties itself, so a plain filtered
-enumeration is simpler and cheaper.
-
----
-
-## 5. Idempotency model
-
-Three mechanisms, layered. The first is the one that actually matters.
-
-**1. A database uniqueness constraint on `InternetMessageId` is the guarantee.**
-Not application logic, not a "have I seen this?" check — those are races waiting to happen.
-`UNIQUE (InternetMessageId)` on the ingestion table means a double-ingest is rejected by the
-database engine under concurrency, at any interleaving. Everything else is optimization.
-
-`internetMessageId` is the right key for the same reason the watcher ledger uses it: it is the
-RFC822 Message-ID, stable across folder moves, whereas Graph's per-message `id` is mailbox- and
-folder-scoped and re-keys the moment anything moves the item.
-
-**2. Ingest-then-delete ordering, never the reverse.**
-The database commit is the point of no return. Delete only after it. This makes the pipeline
-**at-least-once**, and the failure mode is deliberately chosen: if the delete fails after a
-successful commit, the next cycle sees the message again, the unique constraint rejects
-re-ingestion, and the delete is retried. A duplicate *delete attempt* is harmless. A lost
-email is not. Never invert this to save a round trip.
-
-**3. A durable ledger that outlives the message.**
-Ledger rows are kept with `Status = Deleted` for a retention window (90 days suggested), so a
-re-delivered copy of an already-processed Message-ID is recognised and dropped rather than
-re-ingested. Without this, deleting the mailbox copy also deletes the memory of it.
-
-**Single-writer lease.** Exactly one worker instance owns the mailbox at a time, enforced by a
-lease row (or `sp_getapplock`) in SQL with a timeout. This is cheap and removes a whole class
-of problem. The throughput ceiling here is Graph throttling per mailbox, not compute, so there
-is nothing to gain from parallel workers on one mailbox.
-
-**Stability window.** Only consider messages with `receivedDateTime < now − 2 minutes`. This
-prevents acting on a duplicate group that is still arriving (distribution list plus direct
-send land seconds apart) and sidesteps Graph's index eventual-consistency.
-
----
-
-## 6. The transactional unit
-
-There is no distributed transaction between Exchange Online and SQL Server, and no way to
-create one. The design therefore makes **the SQL commit the only atomic step** and treats
-everything on the Exchange side as a retryable effect of it.
-
-Per cycle:
-
-```
-0.  acquire mailbox lease (single writer)          -- else exit quietly
-1.  enumerate Inbox, receivedDateTime < now-2min,
-    $select=id,internetMessageId,receivedDateTime,subject,from,hasAttachments
-    $orderby=receivedDateTime asc, paged
-2.  group in memory by internetMessageId
-    (fallback: content hash, for resends with distinct Message-IDs)
-3.  for each group:
-      canonical := max(receivedDateTime)            -- most recent wins
-      a. ledger upsert -> Claimed  (UNIQUE on InternetMessageId)
-         if already Ingested or Deleted -> skip to (e)   -- already handled
-      b. fetch canonical body + attachments
-      c. BEGIN TX
-           insert into Command Center ingestion table
-           ledger.Status := Ingested, IngestedAtUtc := now
-         COMMIT                                     -- point of no return
-      d. verify: re-read the committed row by InternetMessageId
-      e. permanentDelete EVERY message id in the group
-         (canonical + all older copies) via $batch, 20 per request
-      f. ledger.Status := Deleted, DeletedAtUtc := now
-4.  repeat until no eligible messages
-5.  release lease
-```
-
-Note what step (e) does: the older duplicates are deleted **here**, as part of the same unit,
-having never been ingested and never touched by a separate job. That is the whole redesign.
-
-Step (d) is Requirement 3's "successful ingestion confirmation from EmailAgent" made concrete —
-deletion is gated on a positive read-back of committed state, not on the absence of an
-exception.
-
----
-
-## 7. State model
-
-```sql
-CREATE TABLE dbo.EmailIngestLedger (
-    InternetMessageId  NVARCHAR(400)  NOT NULL PRIMARY KEY,   -- brackets stripped, lowercased
-    ContentHash        CHAR(64)       NULL,                   -- SHA256 fallback key
-    GraphMessageId     NVARCHAR(512)  NULL,                   -- canonical copy, folder-scoped
-    DuplicateCount     INT            NOT NULL DEFAULT 1,
-    ReceivedUtc        DATETIME2(3)   NOT NULL,
-    Status             VARCHAR(16)    NOT NULL,   -- Claimed|Ingested|Deleted|Failed|Quarantined
-    ClaimedBy          NVARCHAR(128)  NULL,
-    ClaimedAtUtc       DATETIME2(3)   NULL,
-    IngestedAtUtc      DATETIME2(3)   NULL,
-    DeletedAtUtc       DATETIME2(3)   NULL,
-    AttemptCount       INT            NOT NULL DEFAULT 0,
-    LastError          NVARCHAR(2000) NULL,
-    CommandCenterId    BIGINT         NULL                    -- FK to the ingested record
-);
-CREATE INDEX IX_Ledger_Status_Received ON dbo.EmailIngestLedger (Status, ReceivedUtc);
-CREATE INDEX IX_Ledger_ContentHash     ON dbo.EmailIngestLedger (ContentHash) WHERE ContentHash IS NOT NULL;
-```
-
-`Status` is a state machine with exactly one legal path forward and no way back to `Claimed`:
-
-```
-Claimed -> Ingested -> Deleted          (happy path)
-Claimed -> Failed -> Quarantined        (poison message)
-Claimed -> (lease expiry) -> Claimed    (crash recovery; safe because ingest is idempotent)
-```
-
----
-
-## 8. Failure handling and recovery
-
-| Failure | Behaviour |
+| Object | Unique key |
 |---|---|
-| Crash between (a) and (c) | Row stays `Claimed` with a stale lease. Reclaimed after the lease timeout and reprocessed; the unique constraint makes that safe. |
-| Crash between (c) and (e) | Row is `Ingested`, message still in mailbox. Next cycle sees it, skips ingestion at (a), proceeds straight to delete. **This is the designed path, not an error.** |
-| Ingestion throws (parse, schema, bad attachment) | `AttemptCount++`, `Status = Failed`, exponential backoff. |
-| `AttemptCount` exceeds threshold (suggest 5) | `Status = Quarantined`; **move the message to a `_Quarantine` folder — never delete it** — and alert. Directly serves "no accidental deletion of emails not yet ingested". |
-| Graph 429 / 503 | Honour `Retry-After`, exponential backoff, and stop the cycle rather than hammering; the next cycle resumes. |
-| Delete fails after commit | Logged at warning, retried next cycle. Not an incident. |
-| SQL unavailable | Cycle aborts before any deletion. Nothing is ever deleted while the database is unreachable. |
-| Mailbox unreachable / auth failure | Cycle aborts. Alert if it persists past N cycles. |
+| `intake.MailScanStaging` | `UX_MailScanStaging_Msg (MessageId, MailboxAddress)` |
+| `intake.Request` | `UX_Request_Msg (MessageId, MailboxAddress)` |
+| `audit.EmailAudit` (older EmailAgent DB) | `UX_EmailAudit_GraphMsg (GraphMessageId, MailboxAddress)` |
 
-**Recovery drills worth rehearsing before go-live:** kill the worker mid-batch and confirm no
-double-ingest; revoke the app's access mid-cycle and confirm nothing is deleted; point it at a
-mailbox with a hold and confirm it detects and refuses.
+The Graph `id` is **mailbox- and folder-scoped**. Two copies of one email — the same mail
+delivered twice, or one copy filed into a second folder — carry two different Graph ids, so
+every one of these constraints sees two distinct messages. Exact-duplicate identity is
+invisible to the pipeline by construction.
 
----
+The enumerator confirms it. `etl/Backfill-MailScan.ps1:158`:
 
-## 9. Logging and audit
-
-- **Structured logs**, one event per stage transition, correlated by `InternetMessageId`.
-- **No PII in logs.** Message-ID, internal ids, counts, timings, error classes — never subject,
-  body, sender, or recipient. The program guardrail already requires this, and a log that
-  survives the email it describes is an unmanaged copy of the record.
-- **Audit table** `EmailIngestAudit` recording every permanent deletion: Message-ID, group
-  size, canonical id, actor (app id), timestamp. This is the only durable evidence that a
-  deletion was authorised and preceded by an ingestion — worth having if anyone ever asks
-  where an email went.
-- **Daily audit report**: processed, deduped (groups collapsed, copies removed), quarantined,
-  failed, mean latency, plus a reconciliation count of mailbox items remaining. The existing
-  monthly-report pattern in `../reporting/` is the model.
-- **Alert on:** quarantine depth > 0, cycle failures > 3 consecutive, mailbox item count
-  trending up (the queue is not draining), `Recoverable Items` non-empty (retention config has
-  drifted).
-
----
-
-## 10. Security
-
-1. **Entra app registration with `Mail.ReadWrite` (Application), scoped by
-   `New-ApplicationAccessPolicy` to `JR_Test@DeltaGroupLog.com` alone.** This is the single
-   most important control in the design. An unscoped `Mail.ReadWrite` application permission
-   grants read/write to **every mailbox in the tenant**, and this app's whole purpose is
-   permanent deletion. Scope it, then verify with `Test-ApplicationAccessPolicy`.
-2. **Certificate authentication, not a client secret.** Cert in the Windows certificate store
-   under the service account, or Azure Key Vault. No credential in `appsettings.json`.
-3. **Least-privilege database access** — `EXECUTE` on the ingestion stored procedures only; no
-   `db_datareader` over the whole Command Center database.
-4. **Service account** following the `DGL-McLeodMcp` precedent: `DOMAIN\user` form, documented,
-   with the credential lifecycle owned by a named person.
-5. **Attachment handling** — size cap, content-type allow-list, and antivirus scan before the
-   file is written anywhere. The mailbox is an untrusted input; anything arriving from outside
-   Delta is hostile until proven otherwise.
-6. **A kill switch** — a config flag that stops deletion (ingest and quarantine only) without
-   redeploying, so a suspected fault can be contained in seconds.
-
----
-
-## 11. Mailbox configuration (one-time, EXO PowerShell, before go-live)
-
-```powershell
-Connect-ExchangeOnline
-
-# Required for Requirement 2 - without these, "permanent" deletion lands in Purges and stays.
-Set-Mailbox JR_Test@DeltaGroupLog.com -SingleItemRecoveryEnabled $false
-Set-Mailbox JR_Test@DeltaGroupLog.com -RetainDeletedItemsFor 0
-Set-Mailbox JR_Test@DeltaGroupLog.com -LitigationHoldEnabled $false
-
-# VERIFY, do not assume. Any hold overrides everything above.
-Get-Mailbox JR_Test@DeltaGroupLog.com |
-  Format-List *Hold*, *SingleItem*, *RetainDeleted*, *Retention*, ArchiveStatus
-Get-RetentionCompliancePolicy | Where-Object { $_.Enabled } |
-  Format-List Name, ExchangeLocation
-
-# The queue must not be pre-sorted out from under the pipeline.
-Get-InboxRule -Mailbox JR_Test@DeltaGroupLog.com     # expect none
-
-# Confirm the dumpster is actually empty once running.
-Get-MailboxFolderStatistics JR_Test@DeltaGroupLog.com -FolderScope RecoverableItems |
-  Format-Table Name, ItemsInFolder
-
-# Scope the app to this mailbox ONLY.
-New-ApplicationAccessPolicy -AppId <app-id> `
-  -PolicyScopeGroupId JR_Test@DeltaGroupLog.com -AccessRight RestrictAccess `
-  -Description "EmailAgent ingestion pipeline - JR_Test queue only"
-Test-ApplicationAccessPolicy -Identity JR_Test@DeltaGroupLog.com -AppId <app-id>
+```
+/mailFolders/Inbox/messages?$select=id,conversationId,subject,from,receivedDateTime,bodyPreview
 ```
 
-Also: **disable the archive mailbox** on `JR_Test`. Auto-expanding archive will move items out
-from under the pipeline, and a queue mailbox has no use for one.
+No `internetMessageId`. A repo-wide search for the term returns nothing.
+
+`intake.vw_MailScanSurvivor` does dedupe, but at **conversation** granularity, and only over
+unprocessed rows. It collapses a thread; it does not recognise two copies of one message.
+When `ConversationId` differs or is NULL (which happened live on 2026-09-01), even that
+degrades to the sender + normalised-subject fallback.
+
+So: **duplicates are not a mailbox hygiene problem. They are a missing column.** A cleanup
+script that deletes copies out of the mailbox treats the symptom and leaves the duplicate
+*records* in the database, which is where they actually cause harm.
 
 ---
 
-## 12. Rollout
+## 3. Requirements against what exists
 
-The program's existing doctrine — dry-run, then human-approved, then automatic — applies, and
-matters more here than anywhere else in the program, because this is the first component whose
-mistakes are unrecoverable.
-
-| Phase | Deletion behaviour | Exit criteria |
+| Req | Status | Notes |
 |---|---|---|
-| 1. Shadow | none; ledger written, nothing ingested or deleted | duplicate detection matches manual inspection over a full week |
-| 2. Ingest-only | none; messages ingested and left in place | zero double-ingests; Command Center records verified correct |
-| 3. Soft delete | move to `_Processed` folder instead of deleting | one week with no message needed back; `_Processed` reviewed and empty of surprises |
-| 4. Permanent | `permanentDelete` | steady state |
-
-Phase 3 is the important one and the cheapest insurance in the plan: it is a full dress
-rehearsal of the real pipeline where every mistake is reversible with a drag of the mouse.
-Do not skip it.
+| 1. Keep exactly one copy | **Partly satisfied** | `vw_MailScanSurvivor` keeps rank 1 per conversation. Exact duplicates are not detected at all (§2). |
+| 1. Retain the **most recent** | **Already correct** | `ORDER BY ReceivedDateTimeUtc DESC, MailScanStagingId DESC` — newest already wins. No change needed. |
+| 2. Permanent deletion | **Mechanism exists, blocked on a grant** | `Remove-IngestedJrTestMail.ps1` already calls `POST /messages/{id}/permanentDelete` in `$batch` of 20. It refuses to run because the app holds `Mail.Read` only (as of 2026-08-25). |
+| 2. Not in Deleted Items | **Satisfied** | `permanentDelete` bypasses it; `-SoftDelete` is the opt-in halfway step. |
+| 2. Not in Recoverable Items / Purges | **Not achievable by code** | See §4. |
+| 3. Mailbox as queue, not archive | **Design already agreed** | The 2026-08-25 doc proposes an Exchange retention policy on JR_Test as the sustainable fix. That is the right answer and needs no code. |
+| 4. Architecture review | See §5 | |
+| 5. Idempotency | **Largely satisfied** | See §6. |
+| 6. Production design | Existing pipeline + §7 changes | |
 
 ---
 
-## 13. Open decisions
+## 4. "Not in Purges" is a configuration outcome, not an API one
 
-1. **Does EmailAgent already exist, and what is its interface?** The design above assumes the
-   pipeline *is* the ingester. If EmailAgent is an existing component that reads the mailbox
-   itself, this becomes an integration problem with a different answer, and two processes on
-   one mailbox is exactly the shape §2 warns about.
-2. **Runtime host** — .NET 8 worker service on the Command Center host is the recommendation.
-3. **Re-delivered Message-ID** — if the same Message-ID arrives again weeks later, is that a
-   duplicate to drop, or a resend to re-ingest? Default proposed: drop.
-4. **Records retention sign-off** — see §3.
-5. **Target schema** in the Command Center database for ingested email.
+Graph's `permanentDelete` (GA April 2025) is the strongest primitive available, and its own
+documentation states it *"permanently deletes a message and places it in the Purges folder."*
+The existing script's header says the same thing. **No API call erases an item outright.**
+
+What governs whether it stays there is mailbox configuration:
+
+| Setting | Required value |
+|---|---|
+| `SingleItemRecoveryEnabled` | `$false` |
+| `RetainDeletedItemsFor` | `0` (max 30 days) |
+| `LitigationHoldEnabled` | `$false` |
+| Purview retention policy covering the mailbox | excluded |
+
+With those set and no hold, items are removed by the Managed Folder Assistant, which runs
+roughly daily. **The honest guarantee is: gone from the mailbox immediately, beyond user
+recovery immediately, fully erased within ~24 hours.** Anything promising instant erasure in
+Exchange Online is wrong.
+
+Note the tension with the quota problem that motivated the original script: Recoverable Items
+has its own quota, so purge retention has to be short for deletion to actually reclaim space.
+
+---
+
+## 5. Technology evaluation (as requested)
+
+| Technology | Verdict |
+|---|---|
+| **Exchange Online PowerShell** | **Setup and retention only.** `Search-Mailbox` is retired; the remaining bulk path, `New-ComplianceSearchAction -Purge`, is all-or-nothing over a query and caps at 10 items per mailbox per search. Unusable for per-message work — but it is the only way to set §4's retention config and the `ApplicationAccessPolicy`. |
+| **Microsoft Graph REST** | **Correct engine, already in use.** `permanentDelete`, `$batch` (20/request), `$select`, client-credential app auth. The existing scripts already do this well, including token refresh at 45 minutes and 404-as-already-gone. |
+| **Graph PowerShell SDK** | **Not needed.** The existing code calls Graph over raw `Invoke-RestMethod`, which avoids SDK version churn entirely. Adopting the SDK now would be churn for its own sake. |
+| **EWS** | **Excluded.** Microsoft begins blocking EWS for non-Microsoft apps on **1 October 2026** — three weeks away — with permanent removal on **1 April 2027**. |
+| **Hybrid** | **This is what exists**, and it is right: EXO PowerShell for tenant configuration, Graph REST for runtime. |
+
+### On the runtime host
+
+My earlier recommendation of a new .NET 8 worker service is **withdrawn**. The existing
+PowerShell + Windows Task Scheduler arrangement is deliberate and well-reasoned — capture was
+moved onto Task Scheduler precisely because the Claude desktop scheduler dropped 23 days of
+ingest silently, and the split between capture (must never miss) and classification (a missed
+run only creates a backlog) is a sound piece of design. Rewriting that in .NET would risk a
+regression in the one stage where a miss means permanent data loss, to gain nothing the
+current design lacks.
+
+---
+
+## 6. Idempotency and races, assessed against the real pipeline
+
+The existing design already has the properties Requirement 5 asks for, and gets them the same
+way I would have: **the database is the source of truth, and deletion is driven from it.**
+
+| Concern | How the existing design handles it |
+|---|---|
+| Double ingestion | Unique indexes on `(MessageId, MailboxAddress)` at both staging and Request; `IF NOT EXISTS` guards; `usp_RegisterEmail` returns `DUPLICATE`. Sound — but keyed on the wrong identity (§2), so two *copies* both pass. |
+| Reprocessing handled mail | `ProcessedAt` watermark plus resumable cursor. |
+| Deleting un-ingested mail | **Structurally impossible** — no `intake.Request` row, no candidacy. The strongest control in the system. |
+| Race between cleanup and ingestion | Cleanup reads a committed DB watermark, so it can only ever lag ingestion, never lead it. My "two processes on one mailbox" warning does not apply here: only one process *writes* the mailbox, and it acts solely on what the other has already committed. |
+
+**The one gap:** because duplicate copies are not recognised as duplicates, each copy gets its
+own `Request` row (a non-survivor becomes `RequestTypeCode='Other'` via the bulk pass). The
+mailbox is cleaned up correctly; the *database* keeps the duplicate records. Fixing §2 fixes
+this at the source.
+
+---
+
+## 7. Recommended changes
+
+Five items. Three are code, two are IT actions, and the IT actions are on the critical path.
+
+**C1 — capture the identity (`etl/Backfill-MailScan.ps1:158`)**
+Add `internetMessageId` to the `$select` and persist it into staging. One token in the URL
+plus the staging insert. This is the whole root-cause fix.
+
+**C2 — schema migration (`sql/45_schema_v39_internet_message_id.sql`)**
+Add `InternetMessageId NVARCHAR(300) NULL` to `intake.MailScanStaging` and `intake.Request`,
+with a non-unique index. Deliberately **case-insensitive collation** — RFC 5322 Message-IDs
+are not Graph ids, and the `email-agent` repo already documents this exact distinction. Do
+**not** add a unique constraint in this migration: existing rows are all NULL and existing
+duplicates would fail it.
+
+**C3 — exact-duplicate dedupe ahead of conversation dedupe**
+Collapse on `InternetMessageId` first, newest wins (matching the existing
+`ORDER BY ReceivedDateTimeUtc DESC` convention), then let the existing conversation dedupe run
+on the survivors. Once a full retention window has populated the column, add the filtered
+unique index `WHERE InternetMessageId IS NOT NULL`.
+
+**IT-1 — grant `Mail.ReadWrite` (Application) with `ApplicationAccessPolicy`**
+Blocks Requirement 2 entirely; the script refuses to run without it. The request text is
+already written in `docs/2026-08-25-jrtest-backfill-and-cleanup.md`, including the two gotchas
+found live: `PolicyScopeGroupId` needs a mail-enabled security group, and the real proof of
+scoping is a `Denied` on a non-scoped mailbox, not a `Granted` on the target.
+**First action: confirm whether this was granted in the two weeks since.**
+
+**IT-2 — retention configuration**
+§4's settings for the Purges requirement, plus the 30-day JR_Test retention policy the
+2026-08-25 doc already recommends as the sustainable "not an archive" fix.
+
+### What to do with `mailbox-hygiene/Remove-DuplicateMessages.ps1`
+
+**Do not use it on JR_Test.** It reads candidates from a mailbox listing, which is the
+opposite of the DB-driven direction the existing tooling correctly chose, and it would delete
+copies whose duplicate records remain in the database. It stays useful as an ad-hoc tool for a
+human's own mailbox; it has no role in this pipeline.
+
+---
+
+## 8. Rollout
+
+1. Confirm the `Mail.ReadWrite` grant (IT-1) — everything else is theatre without it.
+2. Apply C1 + C2 and let capture run one full cycle. `InternetMessageId` populates going
+   forward; historical rows stay NULL, which the filtered index tolerates.
+3. Report only: how many staging rows share an `InternetMessageId`? That number is the real
+   duplicate rate, measured rather than assumed, and it decides whether C3 is urgent.
+4. Apply C3, verify the survivor count drops by roughly that number.
+5. Apply IT-2, then run `Remove-IngestedJrTestMail.ps1 -Execute`.
+6. Verify `Get-MailboxFolderStatistics -FolderScope RecoverableItems` drains within ~24h.
+
+---
+
+## 9. Open items
+
+1. **Has `Mail.ReadWrite` been granted since 2026-08-25?** Cannot be checked from here.
+2. **Two pipelines, one mailbox.** The older `EmailAgent` database (`audit` schema) and the
+   newer `DGL_Command_Center.intake` pipeline both target JR_Test. Is the older one still
+   live? If so, that genuinely *is* two processes on one mailbox, and §2's fix is needed in
+   both. If it is retired, say so and the question closes.
+3. **Records retention.** If a permanently deleted email is a rate confirmation or POD, the
+   database becomes the archive of record and inherits the retention obligation. A decision
+   for a person, not a script.
