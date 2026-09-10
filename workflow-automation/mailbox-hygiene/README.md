@@ -3,6 +3,24 @@
 `Remove-DuplicateMessages.ps1` finds mail that exists more than once in an Exchange Online
 mailbox, keeps exactly one copy of each, and reports, quarantines, or deletes the rest.
 
+> [!IMPORTANT]
+> **Do not point this at `JR_Test@DeltaGroupLog.com`, or any other EmailAgent intake queue.**
+>
+> This script picks its candidates from a **mailbox listing** — it decides what to delete by
+> looking at the mailbox. The intake pipeline's own tool,
+> `etl/Remove-IngestedJrTestMail.ps1` in `dgl-command-center`, picks its candidates from the
+> **database** (`intake.Request` rows), so a message that has not been ingested is untouchable
+> by construction rather than merely checked for. That is the stronger guarantee, and on a
+> queue mailbox it is the one you want.
+>
+> Running this script there would also delete copies whose duplicate *records* remain in the
+> database, which is where the duplicates actually cause harm. The root-cause fix for that is
+> schema v39 (`InternetMessageId` capture + exact-duplicate collapse), not mailbox cleanup —
+> see [`../email-ingestion/ARCHITECTURE.md`](../email-ingestion/ARCHITECTURE.md).
+>
+> **What this script is for:** an ad-hoc pass over a human's own mailbox, where no pipeline
+> owns the mail and there is no database to ask.
+
 **It changes nothing until you tell it to.** The default `-Action Report` writes a CSV and
 exits. That is deliberate: every destructive mode is opt-in, and the safest destructive mode
 (`Quarantine`) only *moves* mail into a folder you can inspect and undo by hand.

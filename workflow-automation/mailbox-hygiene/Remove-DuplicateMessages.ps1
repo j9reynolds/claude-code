@@ -6,6 +6,16 @@
  quarantines, or deletes the rest. Report-only by default: it changes nothing until you
  pass -Action with something other than Report.
 
+ DO NOT RUN THIS AGAINST AN EMAILAGENT INTAKE QUEUE (JR_Test@DeltaGroupLog.com)
+   This picks its candidates from a MAILBOX LISTING. The intake pipeline's own tool,
+   etl/Remove-IngestedJrTestMail.ps1 in dgl-command-center, picks its candidates from the
+   DATABASE (intake.Request rows), so un-ingested mail is untouchable by construction rather
+   than merely checked for - the stronger guarantee, and the right one on a queue mailbox.
+   Duplicates there are a missing-identity problem in the pipeline (schema v39), not a
+   mailbox-hygiene problem. See ../email-ingestion/ARCHITECTURE.md.
+   This script is for an ad-hoc pass over a human's own mailbox, where no pipeline owns the
+   mail and there is no database to ask.
+
  WHY MICROSOFT GRAPH AND NOT EXCHANGE ONLINE POWERSHELL
    Search-Mailbox was retired, and Compliance Search + New-ComplianceSearchAction -Purge
    is all-or-nothing over a query - it cannot keep one copy and drop the rest. Per-message
