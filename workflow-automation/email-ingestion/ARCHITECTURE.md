@@ -188,6 +188,23 @@ human's own mailbox; it has no role in this pipeline.
 
 ---
 
+## 7a. Implementation status
+
+C1-C3 are implemented in **[dgl-command-center#69](https://github.com/j9reynolds/dgl-command-center/pull/69)**
+(draft, branch `claude/internet-message-id-dedupe`):
+
+- `sql/45_schema_v39_internet_message_id.sql` - the column, the exact-duplicate collapse
+  ahead of conversation dedup, and `intake.vw_MailScanDuplicate` for measuring the rate.
+- `etl/Backfill-MailScan.ps1` - `internetMessageId` in the `$select`, persisted, with a
+  column probe so capture keeps running on a box behind on migrations.
+- `tests/BackfillMailScan.InternetMessageId.Tests.ps1` - 26 assertions, database-free.
+- `analysis/jrtest_duplicate_rate_2026-09-10.sql` - read-only; answers open item 2 below
+  and measures the real duplicate rate before anything is deleted.
+
+Deliberately excluded: `intake.Request.InternetMessageId` (nothing would populate it yet)
+and any unique constraint on the new column (existing rows are NULL and existing duplicates
+would fail it). IT-1 and IT-2 remain open and are not code.
+
 ## 8. Rollout
 
 1. Confirm the `Mail.ReadWrite` grant (IT-1) — everything else is theatre without it.
