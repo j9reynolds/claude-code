@@ -361,6 +361,12 @@ unrecoverable wipe (Delete -> Deleted Items; Purge -> Recoverable Items).
   the functions out of the script's AST rather than dot-sourcing (which would execute a run).
 - **Not yet run against a real mailbox.** Written and unit-tested only; the first live pass
   should be `-Action Report` with a tight `-Since`.
+- **DO NOT point it at `JR_Test@DeltaGroupLog.com` or any EmailAgent intake queue.** It picks
+  candidates from a MAILBOX LISTING; `dgl-command-center`'s `etl/Remove-IngestedJrTestMail.ps1`
+  picks them from `intake.Request`, so un-ingested mail there is untouchable by construction
+  rather than merely checked for. That is the stronger guarantee and the right one on a queue
+  mailbox. The warning is in the script header and README as of claude-code#18. This script is
+  for an ad-hoc pass over a human's own mailbox, where no pipeline owns the mail.
 
 ## First live watch cycle — 2026-09-08, `observe` (the pilot's first real run)
 
