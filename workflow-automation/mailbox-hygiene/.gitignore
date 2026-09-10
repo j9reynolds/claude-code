@@ -1,0 +1,5 @@
+# Duplicate reports contain real subjects, senders and Message-IDs (PII).
+# The program guardrail is process-level artifacts only - never commit a run's output.
+duplicates-*.csv
+*.csv
+output/

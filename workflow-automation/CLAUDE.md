@@ -332,6 +332,36 @@ constraint, not a detail. **The connector is the only mailbox path that works he
   turned into a query parameter.
 
 
+## Mailbox hygiene - duplicate removal (`mailbox-hygiene/`, added 2026-09-10)
+
+`Remove-DuplicateMessages.ps1` deduplicates an Exchange Online mailbox: keep one copy per
+group, report/quarantine/delete the rest. **Report-only by default**; every destructive mode
+is opt-in and `-WhatIf`-able, and `Purge` additionally needs `-Force`. Nothing it does is an
+unrecoverable wipe (Delete -> Deleted Items; Purge -> Recoverable Items).
+
+- **It runs on Graph, not Exchange Online PowerShell.** `Search-Mailbox` is retired and
+  Compliance Search + `New-ComplianceSearchAction -Purge` is all-or-nothing over a query - it
+  cannot keep one copy and drop the rest. Per-message control needs Graph, which is also the
+  only transport that works here (HTTPS/443, modern auth; basic-auth IMAP is refused on this
+  tenant however correct the credential).
+- **It keys on `internetMessageId`, same doctrine as the watcher ledger.** Graph's per-message
+  `id` is mailbox- and folder-scoped and re-keys the moment a rule files the mail, so an
+  `id`-keyed pass sees N messages where there is one. The live evidence is in the mailbox-access
+  section above (25 rows / 19 and 25 rows / 20 distinct Message-IDs on two real pages).
+- **`-Scope PerFolder` is the default on purpose.** `PerMailbox` collapses copies across
+  folders, which is what you want for "the same mail is in six places" but WILL collapse a copy
+  someone filed deliberately. Report first, read the CSV, then act.
+- **Sent Items is excluded by default** (along with Drafts, Outbox, Deleted Items, Junk,
+  Conversation History, Sync Issues) - it shares Message-IDs with the Inbox copies of your own
+  mail by design.
+- **Truncation is loud.** Hitting `-MaxMessages` (run-wide, 50k) sets a truncated flag, warns
+  that groups may be incomplete, and stops - a partial scan can show a 3-copy group as a single.
+- **Run reports are PII** (real subjects/senders) and are gitignored. Never commit one.
+- Tests: `test_Remove-DuplicateMessages.ps1`, 19/19, pure logic, no mailbox or network. It lifts
+  the functions out of the script's AST rather than dot-sourcing (which would execute a run).
+- **Not yet run against a real mailbox.** Written and unit-tested only; the first live pass
+  should be `-Action Report` with a tight `-Since`.
+
 ## First live watch cycle — 2026-09-08, `observe` (the pilot's first real run)
 
 `/ops-watch` ran end to end on the PM's Windows box against the real desk. **105 events
