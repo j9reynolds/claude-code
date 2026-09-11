@@ -62,16 +62,71 @@ and **verified against live db02**:
   `"McLeodSql is read-only: only SELECT statements are permitted."` and never reached db02.
   Every `mcleod_query` call, refused ones included, is audit-logged to the `read_audit` table.
 
-**`other_charge` codes — partially answered (2026-09-08).** A live `mcleod_query` returned
-`FSC` = Fuel Surcharge and `STP` = Stop. So fuel and accessorials ARE separable per-code; the
-lump was a connector limitation, not a schema one. The full code set is still to be enumerated
-— run this and record the result here:
+**`other_charge` codes — ENUMERATED (2026-09-09, live whole-book GROUP BY).** Charges ARE
+separable per-code (the lump was a connector limit, not schema). KEY FINDING: accessorial types
+are FRAGMENTED across many `charge_id`s, and `charge_id` alone is NOT enough — the same id
+carries many meanings via `descr` (esp. `APR` = "approved rate", a catch-all for linehaul, daily
+hours, straps, late-appt, etc.). So the engine must classify on (charge_id + descr), not id alone.
+Accessorial-relevant code map (build the classifier from this, not the earlier STP=Stop guess):
+- DETENTION: `DET` (Detention), `DU` (Detention Unloading), `DL` (Detention Loading), `DEP`
+  (Detention), `DR` (Destination Trailer Det.); "MAX DETENTION"/"Max Detention" variants recur
+  under DU/DEP/LAYR. (Detention is the single most fragmented type — sum ALL of these.)
+- LAYOVER: `LAYO` (Layover), `LAYR` (Layover At Receiver, + Max-Det/Re-del variants), `LYC` (Layover).
+- TONU: `TONU` (Truck Order Not Used, + "-Dry Run").
+- LUMPER: `LMP` (Lumper).  DRIVER-ASSIST: `DRA` (Driver Assist).
+- STOP / EXTRA STOP: `STP` (Stop; also mislabeled "10+ STRAPS"/null in a few rows — check descr),
+  `SOC` (Extra Stop), `XST` (Extra Stop).  REDELIVERY: `RDEL`.
+- FUEL (EXCLUDE from accessorials): `FSC`, `FUEL` (biggest totals overall — $9.8M/$4.5M).
+- BASE FREIGHT / rate (NOT accessorials): `APR` (mostly), `FKG` (Flat Rate-KG, airport-suffixed),
+  `SHML`/`SM` (Short Miles), `MIN`, `TEAM`/`TMC`, `MTM` (Empty Miles), `ADM`/`ADC`/`EM`/`ORM` (misc miles).
+Long tail >200 distinct (charge_id,descr) rows (query truncated at 200 by SUM desc); the
+accessorial set above is the actionable part. Full re-run: the GROUP BY below, page OFFSET/FETCH.
 ```sql
 SELECT charge_id, LTRIM(RTRIM(descr)) AS descr, COUNT(*) AS n, SUM(amount) AS total
-FROM other_charge GROUP BY charge_id, LTRIM(RTRIM(descr)) ORDER BY SUM(amount) DESC
+FROM [lme_1720].[dbo].[other_charge] GROUP BY charge_id, LTRIM(RTRIM(descr)) ORDER BY SUM(amount) DESC
 ```
-Expect Detention / TONU / Layover / Lumper to appear as their own codes and map onto
-`customer-accessorial-rate-sheet.md` (`STP` ↔ its Stopoff row).
+Maps onto `customer-accessorial-rate-sheet.md`: Detention (DET/DU/DL/DEP/DR), Layover (LAYO/LAYR/LYC),
+TONU, Lumper (LMP), Stopoff (STP/SOC/XST). NOTE: totals above are whole-book all-customers all-time,
+not the 365-day leakage window — re-scope by ordered_date + customer for the shadow report.
+The live enumeration CONFIRMS `reference-implementation/leakage_model.py`/`analyze_leakage.py`
+`CODE_CATEGORY` map (DET/DL/DU/DEP/DR/LAYO/LAYR/LYC/TONU/LMP/SOC/STP/XST/DRA) — reuse it, don't rebuild.
+
+#1 ACCESSORIAL SHADOW REPORT (IN PROGRESS, chosen next after #6; PR #16 WIP). Scope = ALL
+customers, MONTHLY (Justin). Read-only "money left on the table" report, 4 buckets (un-billed
+customer accessorials / un-enforced carrier deductions / ineligible carrier pay / rate-con gap),
+human-reviewed, NO writes — same host pattern as #6. Architecture: monthly SQL -> 5 CSVs ->
+Python analyzer (reuse analyze_leakage.py + accessorial_rules.py engine, 20/20 tests) -> styled
+workbook -> email + SharePoint drop, guarded, Task Scheduler. Phase 0 DONE: other_charge codes
+enumerated (above); all 27 extract columns verified live (INFORMATION_SCHEMA 2026-09-09); MONTHLY
+extract written = `mcleod-extract/mcleod_accessorial_monthly.sql` (prior-cal-month window via
+DECLARE @mfrom/@mto, same 5 queries/columns as the 365-day one so the analyzer is unchanged;
+Query E uses the PM-corrected direct stop.order_id join).
+V1 PIPELINE COMPLETE (offline-tested; PR #16). Files in `mcleod-extract/`:
+- `accessorial_shadow_report.py` = generator: reads the 5 CSVs -> structured result (4 buckets:
+  A un-billed detention appt-based/per-stop-$150-cap/eligibility-adj + billed loads excluded,
+  B accessorial margin by category, C negative-margin categories, D rate-con gap). Reuses
+  analyze_leakage CODE_CATEGORY/carrier_category/constants so it never diverges from the 365-day
+  analysis. render_text + optional 8th CLI arg writes the workbook. ASCII-only (em-dashes scrubbed).
+- `accessorial_workbook.py` = stdlib OOXML writer (5 tabs: Summary, Detention by Customer,
+  Detention by Load, Accessorial Margin, Rate-Con Gap), same install-free zip/xml approach as #6.
+- `run_accessorial_monthly.ps1` = host runner (pwsh): Invoke-Sqlcmd -OutputAs DataTables splits the
+  5 result sets -> 5 CSVs -> python -> workbook -> guarded email (classic Outlook COM, non-elevated)
+  + optional -SharePointDir drop. ASCII-only. Schedule via a .cmd wrapper (Day 2 06:30). READ-ONLY.
+Tests: generator 5 + workbook 1, all green. FIRST LIVE HOST RUN (2026-09-09): worked end-to-end,
+Aug 2026 = 2,398 delivered loads, rate-con missing 90.5% (2,169), margin table populated
+(detention/layover/tonu/stopoff real $) — BUT bucket A (un-billed detention) came back $0. ROOT
+CAUSE = locale datetime bug: PowerShell Export-Csv on the US host wrote stop datetimes as
+"M/D/YYYY h:mm:ss AM", which parse_dt (ISO-only) couldn't parse -> every stop skipped. FIX (both):
+Query E now CONVERT(...,120)s the 4 stop datetimes to ISO so the CSV is locale-independent, AND
+parse_dt now also accepts the US formats (regression test added). Host re-ran with the fixed files. LESSON: any datetime a PS host Export-Csv's must
+be CONVERTed to ISO in SQL (same class as the em-dash/ASCII lesson from #6).
+V1 VALIDATED END-TO-END ON LIVE DATA (2026-09-09 re-run): Aug 2026 eligible un-billed detention
+= $42,692 (767 loads); pre-eligibility $63,788 (995 loads); 454 carrier-late stops removed ($22,969).
+Top customers surfaced (Apex/Maersk/Life Fitness/CNW/K+N...). CROSS-CHECK: $42,692 x 12 = ~$512k/yr,
+reconciles with the independent 365-day leakage figure ($531k) -> the monthly pipeline reproduces
+the whole-book analysis. Margin table + rate-con gap (90.5%) also populated. NEXT: cadence/recipients,
+then mark PR #16 ready/merge. Write-back stays OUT of scope (policy + write
+scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It
