@@ -88,10 +88,16 @@ def parse_dt(v):
     v = clean(v)
     if v in ("", "NULL"):
         return None
-    v = v.split(".")[0]
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S"):
+    # Trim fractional seconds unless an AM/PM marker follows (e.g. "8:00:00.000 AM").
+    if "." in v and not v.rstrip()[-2:].upper() in ("AM", "PM"):
+        v = v.split(".")[0]
+    from datetime import datetime
+    # ISO first (what the SQL now emits via CONVERT 120), then US locale formats that
+    # PowerShell Export-Csv produces on a US host, so parsing survives either source.
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S",
+                "%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S",
+                "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M"):
         try:
-            from datetime import datetime
             return datetime.strptime(v, fmt)
         except ValueError:
             continue
