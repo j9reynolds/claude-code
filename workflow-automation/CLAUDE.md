@@ -124,9 +124,35 @@ V1 VALIDATED END-TO-END ON LIVE DATA (2026-09-09 re-run): Aug 2026 eligible un-b
 = $42,692 (767 loads); pre-eligibility $63,788 (995 loads); 454 carrier-late stops removed ($22,969).
 Top customers surfaced (Apex/Maersk/Life Fitness/CNW/K+N...). CROSS-CHECK: $42,692 x 12 = ~$512k/yr,
 reconciles with the independent 365-day leakage figure ($531k) -> the monthly pipeline reproduces
-the whole-book analysis. Margin table + rate-con gap (90.5%) also populated. NEXT: cadence/recipients,
-then mark PR #16 ready/merge. Write-back stays OUT of scope (policy + write
+the whole-book analysis. Margin table + rate-con gap (90.5%) also populated.
+SHIPPED + MERGED (PR #16, merge commit 6d09753, 2026-09-14). SCHEDULED + RUNNING GREEN on the host
+(2026-09-15, LastTaskResult 0, emailed via Outlook): task "Accessorial Shadow Report", Day 2 06:30,
+run-only-when-logged-on, non-elevated. Host files in `D:\Project Folder\Automation\Accessorial\`
+(NOTE the SPACES in that path). Write-back stays OUT of scope (policy + write
 scopes). Customer-level $ figures stay OUT of git (workbook only), per guardrails.
+
+TASK SCHEDULER LESSONS (hard-won 2026-09-14/15; APPLY TO BOTH #1 accessorial AND #6 USPS tasks):
+- Justin's PowerShell 7 is the **Store/MSIX build** (`…\WindowsApps\…\pwsh.exe`). Task Scheduler
+  CANNOT launch it — neither the `pwsh` App-Execution-Alias (not on the task's PATH) nor the full
+  WindowsApps exe path (ACL/activation-locked). Symptom: task exits with a weird code (0xFFFD0000 /
+  64) and writes NO log. `winget install Microsoft.PowerShell` only UPGRADES the Store package (no
+  MSI at `C:\Program Files\PowerShell\7`).
+- FIX THAT WORKS: run the task under **Windows PowerShell 5.1** (`powershell.exe`, always launchable
+  from System32). Install the SqlServer module for 5.1 once:
+  `powershell.exe -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; Install-Module SqlServer -Scope CurrentUser -Force -AllowClobber"` (got v22.4.5.1). Both runners are 5.1-compatible.
+  Set the action with SEPARATE fields (avoids the spaces-in-path quoting trap):
+  `$a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File "<script.ps1>"' -WorkingDirectory "<folder>"; Set-ScheduledTask -TaskName "<name>" -Action $a`.
+  (For a no-spaces path like `C:\Automation\USPS`, a plain `schtasks /TR "powershell.exe -NoProfile
+  -ExecutionPolicy Bypass -File C:\Automation\USPS\run_monthly.ps1"` also works.)
+- `New-ScheduledTaskTrigger` has **no -Monthly**; create the monthly trigger with `schtasks /SC
+  MONTHLY /D <day>` then fix the action via `Set-ScheduledTask`.
+- Justin's browser downloads to **`D:\JR_Downloads`** (not `%USERPROFILE%\Downloads`), and files
+  arrive with Mark-of-the-Web (blocked) → `Unblock-File` after copying into place.
+- **DATA-LOSS RISK (open):** the entire `D:\Project Folder\Automation\Accessorial\` folder was
+  EMPTIED between 2026-09-09 and 09-15 (only the .cmd wrapper survived) — cause unknown
+  (cleanup/OneDrive KFM/AV?). Had to re-copy all 5 files. If it recurs the scheduled task breaks.
+  Consider moving the report files to a cleanup-immune folder (e.g. `C:\Automation\Accessorial`).
+- NOTE: a `.cmd` wrapper is NO LONGER used for #1 — the task calls `powershell.exe` directly.
 
 **Operating the connector — gotchas that cost a multi-day outage (2026-09-07/08):**
 - The `DGL-McLeodMcp` service **must** log on as `Delta\J.Reynolds` in `DOMAIN\user` form. It
